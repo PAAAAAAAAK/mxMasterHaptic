@@ -14,6 +14,12 @@ actually do with a mouse, everywhere you do them.
 - **Yours to tune.** Every input can be switched off or given a different
   waveform, with a live preview so you choose by feel rather than by name.
 
+### ⬇ [Download MX Haptics 1.0](https://github.com/PAAAAAAAAK/mxMasterHaptic/releases/download/v1.0.0/MxHaptics_1.0.lplug4)
+
+Double-click the downloaded file, then **confirm the prompt in Logi Options+**.
+Needs an MX Master 4, Logi Options+, and Windows x64.
+[All releases →](https://github.com/PAAAAAAAAK/mxMasterHaptic/releases)
+
 <p align="center">
   <img src="docs/settings-window.png" alt="MX Haptics settings window" width="520">
 </p>
@@ -53,8 +59,8 @@ The haptic supplies the detents the hardware doesn't have.
 
 ## Installing
 
-1. Download `MxHaptics_<version>.lplug4` from
-   [Releases](https://github.com/PAAAAAAAAK/mxMasterHaptic/releases).
+1. [**Download `MxHaptics_1.0.lplug4`**](https://github.com/PAAAAAAAAK/mxMasterHaptic/releases/download/v1.0.0/MxHaptics_1.0.lplug4)
+   (or pick a version from [all releases](https://github.com/PAAAAAAAAK/mxMasterHaptic/releases)).
 2. Double-click it.
 3. **Confirm the install prompt that appears in Logi Options+.**
 
