@@ -5,6 +5,9 @@
 # Scratch / session notes
 prompt.txt
 
+# Packaged output - attached to GitHub releases rather than committed
+dist/
+
 # OS
 .DS_Store
 Thumbs.db

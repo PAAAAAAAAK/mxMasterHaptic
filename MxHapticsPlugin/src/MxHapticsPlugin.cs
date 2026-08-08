@@ -30,12 +30,60 @@ namespace Loupedeck.MxHapticsPlugin
         /// </summary>
         internal HapticSettings Settings { get; private set; }
 
-        private SettingsWindowHost _settingsWindow;
+        private SettingsServer _settingsServer;
 
         /// <summary>
-        /// Opens the settings window. Called by the bindable "Haptic Settings" action.
+        /// Launches the bundled settings application.
         /// </summary>
-        internal void ShowSettingsWindow() => this._settingsWindow?.Show();
+        /// <remarks>
+        /// The executable sits beside this assembly inside the plugin package, so
+        /// there is still exactly one thing to install. If it is already running,
+        /// starting it again is harmless: it detects the existing instance and
+        /// surfaces that window instead of opening a second one.
+        /// </remarks>
+        internal void ShowSettingsWindow()
+        {
+            try
+            {
+                // Use the SDK's AssemblyFilePath, NOT Assembly.Location. The Plugin
+                // Service loads plugins into a collectible load context, which
+                // leaves Location empty - GetDirectoryName then returns null and
+                // Path.Combine throws.
+                var assemblyPath = this.AssemblyFilePath;
+
+                var pluginDir = String.IsNullOrEmpty(assemblyPath)
+                    ? null
+                    : System.IO.Path.GetDirectoryName(assemblyPath);
+
+                if (String.IsNullOrEmpty(pluginDir))
+                {
+                    PluginLog.Error("[MxHaptics] Could not determine the plugin directory.");
+                    return;
+                }
+
+                var exePath = System.IO.Path.Combine(pluginDir, "MxHapticsSettings.exe");
+
+                if (!System.IO.File.Exists(exePath))
+                {
+                    PluginLog.Error($"[MxHaptics] Settings application not found at '{exePath}'.");
+                    return;
+                }
+
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = exePath,
+                    Arguments = SettingsServer.PipeName,
+                    UseShellExecute = false,
+                    WorkingDirectory = pluginDir,
+                });
+
+                PluginLog.Info("[MxHaptics] Settings application launched.");
+            }
+            catch (Exception ex)
+            {
+                PluginLog.Error($"[MxHaptics] Failed to launch settings application: {ex.Message}");
+            }
+        }
 
         // Initializes a new instance of the plugin class.
         public MxHapticsPlugin()
@@ -64,7 +112,11 @@ namespace Loupedeck.MxHapticsPlugin
 
             this._haptics = new HapticOutput(this);
             this.Settings = new HapticSettings(this);
-            this._settingsWindow = new SettingsWindowHost(this.Settings, this._haptics);
+
+            // Serves the separate settings application. Started even when no
+            // settings window is open, since the window may be launched at any time.
+            this._settingsServer = new SettingsServer(this.Settings, this._haptics);
+            this._settingsServer.Start();
 
             // STAGES 1-2: click and scroll haptics.
             //
@@ -111,10 +163,10 @@ namespace Loupedeck.MxHapticsPlugin
 
             this._inputSources.Clear();
 
-            // Close the settings window too: it runs on its own thread and would
-            // otherwise outlive this assembly across a plugin reload.
-            this._settingsWindow?.Dispose();
-            this._settingsWindow = null;
+            // Stop serving settings: the pipe must be released before the reloaded
+            // plugin tries to claim the same name.
+            this._settingsServer?.Dispose();
+            this._settingsServer = null;
             this._haptics = null;
 
             PluginLog.Info("[MxHaptics] Unloaded.");

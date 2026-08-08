@@ -4,12 +4,12 @@
     <!-- NOTE: LogiPluginTool 6.1.4 scaffolds net8.0, but the installed
          PluginApi.dll (6.4.0.3079) is built against .NET 10. Compiling against
          it from net8.0 fails with CS1705. Must match the Plugin Service runtime. -->
-    <!-- net10.0-windows (not plain net10.0) so the bundled settings window can use
-         WinForms. The build is already Windows-only via RuntimeIdentifier below;
-         macOS support would mean multi-targeting and a platform-specific settings
-         UI, which the IInputSource seam keeps possible. -->
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Plain net10.0, NOT net10.0-windows. `logiplugintool verify` inspects this
+         assembly with a metadata resolver that cannot load desktop framework
+         assemblies, so a reference to System.Windows.Forms here fails packaging
+         and blocks Marketplace submission. The settings UI therefore lives in a
+         separate executable (MxHapticsSettings) bundled in the same package. -->
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <RootNamespace>Loupedeck.MxHapticsPlugin</RootNamespace>
@@ -19,6 +19,10 @@
 
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+
+    <!-- No debug symbols in a Release package: nobody downloading the plugin
+         needs them, and they are a third of the payload. -->
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
 
     <!-- SharpHook ships a native uiohook binary per runtime identifier. Without a
          RID pinned, ALL of them are copied to runtimes/*/native/ and the Logi
@@ -49,12 +53,37 @@
   <ItemGroup>
     <Reference Include="PluginApi">
       <HintPath>$(PluginApiDir)PluginApi.dll</HintPath>
+
+      <!-- Compile against it, but do not ship it. The Logi Plugin Service loads
+           the plugin into its own process and already provides PluginApi.dll and
+           its dependencies (SkiaSharp, YamlDotNet, Newtonsoft.Json, and others).
+           Bundling our own copies would put a second, possibly older, set of
+           those assemblies in the package and invite version conflicts against
+           whatever the installed Options+ actually has. -->
+      <Private>false</Private>
     </Reference>
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="SharpHook" Version="7.1.3" />
   </ItemGroup>
+
+  <!-- Build the settings application and copy it in beside the plugin assembly,
+       so the package contains everything and the user installs one thing. It is
+       a separate project purely so THIS assembly stays free of desktop framework
+       references, which `logiplugintool verify` cannot resolve. -->
+  <Target Name="BuildSettingsApp" BeforeTargets="PostBuildEvent">
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\..\MxHapticsSettings\MxHapticsSettings.csproj&quot; -c $(Configuration) --nologo -v quiet" />
+  </Target>
+
+  <Target Name="CopySettingsApp" AfterTargets="PostBuildEvent">
+    <ItemGroup>
+      <SettingsAppFiles Include="$(MSBuildThisFileDirectory)..\..\MxHapticsSettings\bin\$(Configuration)\**\*.*"
+                        Exclude="$(MSBuildThisFileDirectory)..\..\MxHapticsSettings\bin\$(Configuration)\**\*.pdb" />
+    </ItemGroup>
+    <Copy SourceFiles="@(SettingsAppFiles)" DestinationFolder="$(OutputPath)%(RecursiveDir)" />
+    <Message Text="🪟 Settings application copied into plugin output" Importance="High" />
+  </Target>
 
   <Target Name="CopyPackage" AfterTargets="PostBuildEvent">
     <Message Text="📦 Copying package files..." Importance="High" />

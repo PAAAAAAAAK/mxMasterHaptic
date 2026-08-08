@@ -1,4 +1,4 @@
-namespace Loupedeck.MxHapticsPlugin.SettingsUi
+namespace MxHapticsSettings
 {
     using System;
     using System.Collections.Generic;
@@ -10,27 +10,23 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
     using Loupedeck.MxHapticsPlugin.Haptics;
 
     /// <summary>
-    /// The plugin's settings window.
+    /// The MX Haptics settings window.
     /// </summary>
     /// <remarks>
-    /// WHY A WINDOW AT ALL. The Actions SDK has no plugin settings page -
-    /// PluginPreferenceType only covers account credentials, and the Action Editor
-    /// configures a single bound action at a time, which is the wrong shape for
-    /// global preferences (it even offers Save/Cancel semantics we cannot honour).
+    /// Runs in its own process, bundled inside the plugin package. There is no
+    /// second download and no browser tab - the two things that make competing
+    /// plugins unpleasant - but it is not hosted inside the Logi Plugin Service,
+    /// so a fault here cannot take down every haptic on the machine.
     ///
-    /// Crucially this ships INSIDE the .lplug4. There is no second download and no
-    /// browser tab - the two things that make competing plugins unpleasant.
-    ///
-    /// Split into two sections because the two halves are different in kind:
-    /// direct input (a click, a scroll notch) versus gestures that bracket a
-    /// movement. Grids are built from HapticEvents.All, so later events appear
-    /// automatically in whichever section their category maps to.
+    /// Split into sections because the halves differ in kind: direct input (a
+    /// click, a scroll notch) versus gestures that bracket a movement. Grids are
+    /// built from HapticEvents.All, which is compiled into both this application
+    /// and the plugin, so new events appear here with no UI work.
     /// </remarks>
     internal sealed class SettingsForm : Form
     {
-        private readonly HapticSettings _settings;
-        private readonly HapticOutput _haptics;
-        private readonly List<DataGridView> _grids = new();
+        private readonly SettingsClient _client;
+        private readonly Dictionary<String, (Boolean Enabled, String Waveform)> _values;
 
         private const String ColAction = "action";
         private const String ColEnabled = "enabled";
@@ -50,12 +46,24 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
             public String Display { get; init; }
         }
 
-        public SettingsForm(HapticSettings settings, HapticOutput haptics)
+        public SettingsForm(SettingsClient client, Dictionary<String, (Boolean, String)> values)
         {
-            this._settings = settings;
-            this._haptics = haptics;
+            this._client = client;
+            this._values = values;
 
             this.BuildLayout();
+        }
+
+        private (Boolean Enabled, String Waveform) ValueFor(String eventId)
+        {
+            if (this._values.TryGetValue(eventId, out var value))
+            {
+                return value;
+            }
+
+            var def = HapticEvents.Find(eventId);
+
+            return (def?.DefaultEnabled ?? false, def?.DefaultWaveform ?? Waveforms.SubtleCollision);
         }
 
         private void BuildLayout()
@@ -65,9 +73,6 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
             this.MinimumSize = new Size(560, 360);
             this.Font = new Font("Segoe UI", 9F);
 
-            // Width is fixed; height is computed from the content further down, so
-            // the window opens showing every row without scrolling. Hard-coding a
-            // height would need changing every time an event is added.
             const Int32 defaultWidth = 700;
 
             this.ClientSize = new Size(defaultWidth, 560);
@@ -78,6 +83,8 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
 
             var headerPadding = new Padding(12, 10, 12, 8);
 
+            // Height is derived from the font rather than guessed, so the second
+            // line is not clipped at larger Windows text scales.
             var header = new Label
             {
                 Dock = DockStyle.Top,
@@ -88,18 +95,16 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
                 Height = (this.Font.Height * 2) + headerPadding.Vertical + 4,
             };
 
-            // Two sections, each a label plus its own grid. Proportional rows so
-            // both stay visible as the window is resized.
             var layout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 4,
                 Padding = new Padding(8, 0, 8, 0),
             };
+
             // Sections are declared rather than derived, so related categories can
-            // share one grid. Anything missing from this table would be invisible
-            // in the UI, so it is checked below rather than lost silently.
+            // share one grid. Anything missing here would be invisible, so it is
+            // reported rather than lost silently.
             var sections = new (String Title, String[] Categories)[]
             {
                 ("Clicks and scroll", new[] { "Clicks", "Scroll" }),
@@ -121,8 +126,8 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
                 labels.Add(MakeSectionLabel(section.Title));
             }
 
-            // Share space in proportion to how many rows each section actually has,
-            // rather than an even split that would starve the larger ones.
+            // Share space in proportion to each section's row count rather than an
+            // even split, which would starve the larger ones.
             var totalGridHeight = (Single)heights.Sum();
 
             layout.RowCount = sections.Length * 2;
@@ -148,9 +153,9 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
             closeButton.Click += (_, _) => this.Close();
             footer.Controls.Add(closeButton);
 
-            // Changes are saved the moment they are made, so there is no Save button
-            // and deliberately no Cancel - matching how the settings are actually
-            // persisted rather than implying a transaction we do not support.
+            // Changes save as they are made, so there is no Save button and
+            // deliberately no Cancel - matching how settings actually persist
+            // rather than implying a transaction we do not support.
             footer.Controls.Add(new Label
             {
                 Dock = DockStyle.Left,
@@ -165,63 +170,17 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
             this.Controls.Add(header);
             this.AcceptButton = closeButton;
 
-            // Size to content so nothing is scrolled off on open, but never taller
-            // than the screen will comfortably hold - on a short display, or once
-            // enough events exist, the content genuinely will not fit and scrolling
-            // is the right answer.
             var chrome = header.Height + footer.Height + layout.Padding.Vertical
                        + labels.Sum(l => l.PreferredHeight + l.Margin.Vertical);
 
-            // Slack below each section's rows. Sizing the window to exactly the
-            // content makes it feel cramped, and the empty strip also signals that
-            // the list can grow.
+            // Slack below each section's rows: sizing to exactly the content feels
+            // cramped, and the empty strip signals the list can grow.
             const Int32 sectionSlackPx = 70;
 
             var wanted = chrome + heights.Sum() + (sectionSlackPx * sections.Length);
             var maxHeight = (Int32)(Screen.FromPoint(Cursor.Position).WorkingArea.Height * 0.9);
 
             this.ClientSize = new Size(defaultWidth, Math.Min(wanted, maxHeight));
-        }
-
-        /// <summary>
-        /// Logs any event category that no section displays.
-        /// </summary>
-        /// <remarks>
-        /// Exists because of a real bug: hover events were added with a new
-        /// category, no section listed it, and they simply never appeared in the
-        /// window - configurable in principle, invisible in practice. A missing
-        /// section is now noisy rather than silent.
-        /// </remarks>
-        private static void WarnAboutUnlistedCategories((String Title, String[] Categories)[] sections)
-        {
-            var shown = sections
-                .SelectMany(s => s.Categories)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var category in HapticEvents.All.Select(e => e.Category).Distinct())
-            {
-                if (!shown.Contains(category))
-                {
-                    PluginLog.Error(
-                        $"[MxHaptics] Event category '{category}' has no settings section - " +
-                        "its events cannot be configured.");
-                }
-            }
-        }
-
-        /// <summary>Height a grid needs to show every row without scrolling.</summary>
-        private static Int32 NaturalHeight(DataGridView grid)
-        {
-            var rows = 0;
-
-            foreach (DataGridViewRow row in grid.Rows)
-            {
-                rows += row.Height;
-            }
-
-            // +4 for the single-pixel border on each side plus a little slack, so
-            // the last row is never clipped into a phantom scrollbar.
-            return grid.ColumnHeadersHeight + rows + 4;
         }
 
         private static Label MakeSectionLabel(String text) => new()
@@ -232,7 +191,6 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
             Font = new Font("Segoe UI", 9F, FontStyle.Bold),
         };
 
-        /// <summary>Builds a grid containing every event in the given categories.</summary>
         private DataGridView MakeGrid(String[] categories)
         {
             var grid = new DataGridView
@@ -288,16 +246,13 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
             grid.CellContentClick += this.OnCellContentClick;
             grid.CurrentCellDirtyStateChanged += this.OnCurrentCellDirtyStateChanged;
 
-            // NOTE: CellValueChanged is deliberately attached AFTER the rows are
-            // populated, further down. Assigning a cell's value raises it just as a
-            // user edit does, so subscribing here would make merely opening the
-            // window replay every waveform and rewrite every setting.
+            // NOTE: CellValueChanged is attached AFTER the rows are populated,
+            // below. Assigning a cell's value raises it exactly as a user edit
+            // does, so subscribing here would make merely opening the window
+            // replay every waveform and rewrite every setting.
 
-            // Paired events (a drag's start and end) are banded with a shared tint
-            // so they read as one gesture. They remain independently switchable -
-            // the banding communicates the relationship without removing the
-            // choice, which is the point: the same button does different jobs in
-            // different apps, and wanting only the "grab" is reasonable.
+            // Paired events (a drag's start and end) share a tint so they read as
+            // one gesture while staying independently switchable.
             String previousGroup = null;
             var shadeGroup = false;
 
@@ -305,13 +260,12 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
             {
                 if (def.GroupKey != previousGroup)
                 {
-                    // Alternate the tint on every group change so adjacent pairs
-                    // stay distinguishable from each other.
                     shadeGroup = def.GroupKey != null && !shadeGroup;
                     previousGroup = def.GroupKey;
                 }
 
-                var index = grid.Rows.Add(def.DisplayName, this._settings.IsEnabled(def.Id), null, "Test");
+                var current = this.ValueFor(def.Id);
+                var index = grid.Rows.Add(def.DisplayName, current.Enabled, null, "Test");
                 var row = grid.Rows[index];
 
                 if (def.GroupKey != null && shadeGroup)
@@ -319,29 +273,20 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
                     row.DefaultCellStyle.BackColor = Color.FromArgb(244, 244, 248);
                 }
 
-                // Stash the event id on the row so handlers never have to map back
-                // from a display label, which would break the moment two events
-                // shared a name.
                 row.Tag = def.Id;
 
                 // Per-row item list: clicks and scroll repeat constantly, so long
-                // waveforms are omitted there rather than offered as a trap. In
-                // gestures - which happen once per deliberate movement - everything
-                // is available.
+                // waveforms are omitted there rather than offered as a trap.
                 var cell = (DataGridViewComboBoxCell)row.Cells[ColWaveform];
                 cell.DisplayMember = nameof(WaveformItem.Display);
                 cell.ValueMember = nameof(WaveformItem.Value);
                 cell.DataSource = BuildWaveformItems(def.Category);
-                cell.Value = this._settings.WaveformFor(def.Id);
+                cell.Value = current.Waveform;
             }
 
             UpdateRowStates(grid);
 
-            // Now that every cell holds its stored value, start listening for real
-            // user edits.
             grid.CellValueChanged += this.OnCellValueChanged;
-
-            this._grids.Add(grid);
 
             return grid;
         }
@@ -351,9 +296,9 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
         /// </summary>
         /// <remarks>
         /// Clicks and scroll fire constantly, and a long waveform there is not a
-        /// matter of taste - it outlasts the action that triggered it and the
-        /// motor is still going when the next click arrives. Those are filtered
-        /// out rather than left as a trap. Gestures get the full set.
+        /// matter of taste - it outlasts the action that triggered it and the motor
+        /// is still going when the next click arrives. Those are filtered out
+        /// rather than left as a trap. Gestures get the full set.
         /// </remarks>
         private static List<WaveformItem> BuildWaveformItems(String category)
         {
@@ -369,6 +314,29 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
                 .ToList();
         }
 
+        private static void WarnAboutUnlistedCategories((String Title, String[] Categories)[] sections)
+        {
+            var shown = sections
+                .SelectMany(s => s.Categories)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var missing = HapticEvents.All
+                .Select(e => e.Category)
+                .Distinct()
+                .Where(c => !shown.Contains(c))
+                .ToList();
+
+            if (missing.Count > 0)
+            {
+                MessageBox.Show(
+                    "These event categories have no settings section and cannot be "
+                    + "configured:" + Environment.NewLine + String.Join(", ", missing),
+                    "MX Haptics",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+        }
+
         /// <summary>Greys out the waveform of any event that is switched off.</summary>
         private static void UpdateRowStates(DataGridView grid)
         {
@@ -380,6 +348,18 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
                 row.Cells[ColWaveform].Style.ForeColor =
                     isEnabled ? SystemColors.ControlText : SystemColors.GrayText;
             }
+        }
+
+        private static Int32 NaturalHeight(DataGridView grid)
+        {
+            var rows = 0;
+
+            foreach (DataGridViewRow row in grid.Rows)
+            {
+                rows += row.Height;
+            }
+
+            return grid.ColumnHeadersHeight + rows + 4;
         }
 
         private void OnCurrentCellDirtyStateChanged(Object sender, EventArgs e)
@@ -404,33 +384,40 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
                 return;
             }
 
+            var isEnabled = row.Cells[ColEnabled].Value is Boolean b && b;
+            var waveform = row.Cells[ColWaveform].Value as String;
+
+            if (String.IsNullOrEmpty(waveform))
+            {
+                return;
+            }
+
+            this._values[eventId] = (isEnabled, waveform);
+
+            try
+            {
+                this._client.Set(eventId, isEnabled, waveform);
+            }
+            catch (Exception)
+            {
+                // The plugin reloads on rebuild and during Options+ restarts.
+                // Losing the connection should not take the window down with it.
+                return;
+            }
+
             var columnName = grid.Columns[e.ColumnIndex].Name;
 
             if (columnName == ColEnabled)
             {
-                var isEnabled = row.Cells[ColEnabled].Value is Boolean b && b;
-                this._settings.SetEnabled(eventId, isEnabled);
                 UpdateRowStates(grid);
-
-                // Play it on enable so turning something on immediately shows what
-                // it feels like, rather than requiring the user to go try it.
-                if (isEnabled)
-                {
-                    this._haptics.Play(this._settings.WaveformFor(eventId));
-                }
             }
-            else if (columnName == ColWaveform)
+
+            // Live preview: the entire point of choosing a waveform is how it
+            // feels, so play it the instant it is selected - or when an event is
+            // switched on, so enabling something shows what it does.
+            if (isEnabled && (columnName == ColWaveform || columnName == ColEnabled))
             {
-                if (row.Cells[ColWaveform].Value is not String waveform || String.IsNullOrEmpty(waveform))
-                {
-                    return;
-                }
-
-                this._settings.SetWaveform(eventId, waveform);
-
-                // Live preview: the entire point of choosing a waveform is how it
-                // feels, so play it the instant it is selected.
-                this._haptics.Play(waveform);
+                this.TryPlay(waveform);
             }
         }
 
@@ -445,7 +432,20 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
 
             if (grid.Rows[e.RowIndex].Tag is String eventId)
             {
-                this._haptics.Play(this._settings.WaveformFor(eventId));
+                this.TryPlay(this.ValueFor(eventId).Waveform);
+            }
+        }
+
+        private void TryPlay(String waveform)
+        {
+            try
+            {
+                this._client.Play(waveform);
+            }
+            catch (Exception)
+            {
+                // Preview is a convenience; a dropped connection is not worth an
+                // error dialog mid-edit.
             }
         }
     }

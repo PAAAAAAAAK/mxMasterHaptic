@@ -6,15 +6,15 @@ namespace Loupedeck.MxHapticsPlugin.Actions
     /// Opens the MX Haptics settings window.
     /// </summary>
     /// <remarks>
-    /// This replaced an Action Editor based version. The Action Editor configures
-    /// ONE action instance at a time and presents Save/Cancel semantics, which is
-    /// the wrong model for global preferences - it made every event look like it
-    /// needed its own binding, and Cancel could not actually undo anything because
-    /// settings are stored globally.
+    /// The window is a separate executable bundled in the same plugin package, so
+    /// this launches a process rather than showing a form. From the user's side
+    /// nothing differs: bind this action once, press it, settings appear.
     ///
-    /// So the action does one job: open the settings window. Bind it once - to a
-    /// spare key or an Actions Ring slot - and it covers every event, now and as
-    /// later stages add more. One binding for the whole plugin.
+    /// It is one action rather than one per setting deliberately. An earlier
+    /// version exposed each toggle as its own bindable parameter, which spent a
+    /// scarce Actions Ring slot per option; and an Action Editor version was worse
+    /// still, since that editor configures a single bound action and offers
+    /// Save/Cancel semantics that global preferences cannot honour.
     /// </remarks>
     public class HapticSettingsCommand : PluginDynamicCommand
     {

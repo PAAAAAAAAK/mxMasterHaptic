@@ -41,6 +41,12 @@ pluginFolderWin: bin
 
 # List of devices the plugin is optimized for.
 supportedDevices:
+    # ActionsRing is how this plugin is actually used: the single "Haptic Settings"
+    # action is bound to an Actions Ring slot or a mouse button on an MX device.
+    # The haptics themselves are not bound to any control - they follow real mouse
+    # input - so this only governs where the settings action can be assigned.
+    - ActionsRing
+
     # LoupedeckCtFamily covers the following devices: Loupedeck CT, Live and Live S,
     # Razer Stream Controller, and Razer Stream Controller X.
     - LoupedeckCtFamily

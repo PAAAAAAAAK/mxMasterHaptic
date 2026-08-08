@@ -2,8 +2,7 @@ namespace Loupedeck.MxHapticsPlugin.Input
 {
     using System;
     using System.Collections.Generic;
-    using System.Drawing;
-    using System.Windows.Forms;
+    using System.Runtime.InteropServices;
 
     using Loupedeck.MxHapticsPlugin.Config;
     using Loupedeck.MxHapticsPlugin.Haptics;
@@ -144,9 +143,25 @@ namespace Loupedeck.MxHapticsPlugin.Input
         // Virtual desktop bounds, cached because MouseMoved fires constantly and
         // this must stay cheap. Re-read periodically so docking, undocking or a
         // resolution change is picked up without needing a display-change hook.
-        private Rectangle _virtualScreen;
+        private Int32 _screenLeft;
+        private Int32 _screenTop;
+        private Int32 _screenRight;
+        private Int32 _screenBottom;
         private Int64 _virtualScreenReadMs;
         private const Int64 VirtualScreenTtlMs = 5000;
+
+        // Read via GetSystemMetrics rather than WinForms' SystemInformation: the
+        // plugin assembly must not reference System.Windows.Forms. The Logi
+        // plugin verifier cannot resolve desktop framework assemblies, so a
+        // WinForms reference here fails packaging - which is why the settings
+        // window is a separate executable.
+        [DllImport("user32.dll")]
+        private static extern Int32 GetSystemMetrics(Int32 index);
+
+        private const Int32 SM_XVIRTUALSCREEN = 76;
+        private const Int32 SM_YVIRTUALSCREEN = 77;
+        private const Int32 SM_CXVIRTUALSCREEN = 78;
+        private const Int32 SM_CYVIRTUALSCREEN = 79;
 
         public String Name => "Mouse";
 
@@ -313,14 +328,14 @@ namespace Loupedeck.MxHapticsPlugin.Input
                 return;
             }
 
-            var bounds = this.GetVirtualScreen();
+            this.RefreshVirtualScreen();
 
             // Bounds are exclusive on the right/bottom, so the last addressable
             // pixel is one less than the edge.
-            var atEdge = e.Data.X <= bounds.Left
-                      || e.Data.Y <= bounds.Top
-                      || e.Data.X >= bounds.Right - 1
-                      || e.Data.Y >= bounds.Bottom - 1;
+            var atEdge = e.Data.X <= this._screenLeft
+                      || e.Data.Y <= this._screenTop
+                      || e.Data.X >= this._screenRight - 1
+                      || e.Data.Y >= this._screenBottom - 1;
 
             if (atEdge)
             {
@@ -336,32 +351,35 @@ namespace Loupedeck.MxHapticsPlugin.Input
             // Re-arm only after a clear retreat, so resting against the edge does
             // not machine-gun on sub-pixel jitter.
             if (this._atScreenEdge
-                && e.Data.X > bounds.Left + ScreenEdgeReleasePx
-                && e.Data.Y > bounds.Top + ScreenEdgeReleasePx
-                && e.Data.X < bounds.Right - 1 - ScreenEdgeReleasePx
-                && e.Data.Y < bounds.Bottom - 1 - ScreenEdgeReleasePx)
+                && e.Data.X > this._screenLeft + ScreenEdgeReleasePx
+                && e.Data.Y > this._screenTop + ScreenEdgeReleasePx
+                && e.Data.X < this._screenRight - 1 - ScreenEdgeReleasePx
+                && e.Data.Y < this._screenBottom - 1 - ScreenEdgeReleasePx)
             {
                 this._atScreenEdge = false;
             }
         }
 
-        /// <summary>Virtual desktop bounds, cached with a short TTL.</summary>
+        /// <summary>Refreshes the cached virtual desktop bounds if they are stale.</summary>
         /// <remarks>
         /// The VIRTUAL screen, not a single display: with multiple monitors the
         /// cursor crosses between them freely, and only the outer boundary of the
         /// whole arrangement is a real wall the cursor cannot pass.
         /// </remarks>
-        private Rectangle GetVirtualScreen()
+        private void RefreshVirtualScreen()
         {
             var now = Environment.TickCount64;
 
-            if (this._virtualScreen.IsEmpty || (now - this._virtualScreenReadMs) > VirtualScreenTtlMs)
+            if (this._screenRight != 0 && (now - this._virtualScreenReadMs) <= VirtualScreenTtlMs)
             {
-                this._virtualScreen = SystemInformation.VirtualScreen;
-                this._virtualScreenReadMs = now;
+                return;
             }
 
-            return this._virtualScreen;
+            this._screenLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
+            this._screenTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
+            this._screenRight = this._screenLeft + GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            this._screenBottom = this._screenTop + GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            this._virtualScreenReadMs = now;
         }
 
         private void OnMouseWheel(Object sender, MouseWheelHookEventArgs e)
