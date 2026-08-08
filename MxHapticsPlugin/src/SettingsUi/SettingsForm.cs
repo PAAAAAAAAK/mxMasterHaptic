@@ -97,29 +97,44 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
                 RowCount = 4,
                 Padding = new Padding(8, 0, 8, 0),
             };
-            var inputGrid = this.MakeGrid(new[] { "Clicks", "Scroll" });
-            var gestureGrid = this.MakeGrid(new[] { "Gestures" });
+            // Sections are declared rather than derived, so related categories can
+            // share one grid. Anything missing from this table would be invisible
+            // in the UI, so it is checked below rather than lost silently.
+            var sections = new (String Title, String[] Categories)[]
+            {
+                ("Clicks and scroll", new[] { "Clicks", "Scroll" }),
+                ("Gestures", new[] { "Gestures" }),
+            };
 
-            var inputHeight = NaturalHeight(inputGrid);
-            var gestureHeight = NaturalHeight(gestureGrid);
+            WarnAboutUnlistedCategories(sections);
+
+            var labels = new List<Label>();
+            var grids = new List<DataGridView>();
+            var heights = new List<Int32>();
+
+            foreach (var section in sections)
+            {
+                var grid = this.MakeGrid(section.Categories);
+
+                grids.Add(grid);
+                heights.Add(NaturalHeight(grid));
+                labels.Add(MakeSectionLabel(section.Title));
+            }
 
             // Share space in proportion to how many rows each section actually has,
-            // rather than a fixed 50/50 that would starve the larger one as the two
-            // sections drift apart in size.
-            var total = (Single)(inputHeight + gestureHeight);
+            // rather than an even split that would starve the larger ones.
+            var totalGridHeight = (Single)heights.Sum();
 
-            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, inputHeight / total * 100F));
-            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, gestureHeight / total * 100F));
+            layout.RowCount = sections.Length * 2;
 
-            var inputLabel = MakeSectionLabel("Clicks and scroll");
-            var gestureLabel = MakeSectionLabel("Gestures");
+            for (var i = 0; i < sections.Length; i++)
+            {
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                layout.RowStyles.Add(new RowStyle(SizeType.Percent, heights[i] / totalGridHeight * 100F));
 
-            layout.Controls.Add(inputLabel, 0, 0);
-            layout.Controls.Add(inputGrid, 0, 1);
-            layout.Controls.Add(gestureLabel, 0, 2);
-            layout.Controls.Add(gestureGrid, 0, 3);
+                layout.Controls.Add(labels[i], 0, i * 2);
+                layout.Controls.Add(grids[i], 0, (i * 2) + 1);
+            }
 
             var footer = new Panel { Dock = DockStyle.Bottom, Height = 46 };
 
@@ -155,18 +170,43 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
             // enough events exist, the content genuinely will not fit and scrolling
             // is the right answer.
             var chrome = header.Height + footer.Height + layout.Padding.Vertical
-                       + inputLabel.PreferredHeight + inputLabel.Margin.Vertical
-                       + gestureLabel.PreferredHeight + gestureLabel.Margin.Vertical;
+                       + labels.Sum(l => l.PreferredHeight + l.Margin.Vertical);
 
             // Slack below each section's rows. Sizing the window to exactly the
             // content makes it feel cramped, and the empty strip also signals that
-            // the list can grow - which it will, as later stages add events.
-            const Int32 sectionSlackPx = 90;
+            // the list can grow.
+            const Int32 sectionSlackPx = 70;
 
-            var wanted = chrome + inputHeight + gestureHeight + (sectionSlackPx * 2);
+            var wanted = chrome + heights.Sum() + (sectionSlackPx * sections.Length);
             var maxHeight = (Int32)(Screen.FromPoint(Cursor.Position).WorkingArea.Height * 0.9);
 
             this.ClientSize = new Size(defaultWidth, Math.Min(wanted, maxHeight));
+        }
+
+        /// <summary>
+        /// Logs any event category that no section displays.
+        /// </summary>
+        /// <remarks>
+        /// Exists because of a real bug: hover events were added with a new
+        /// category, no section listed it, and they simply never appeared in the
+        /// window - configurable in principle, invisible in practice. A missing
+        /// section is now noisy rather than silent.
+        /// </remarks>
+        private static void WarnAboutUnlistedCategories((String Title, String[] Categories)[] sections)
+        {
+            var shown = sections
+                .SelectMany(s => s.Categories)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var category in HapticEvents.All.Select(e => e.Category).Distinct())
+            {
+                if (!shown.Contains(category))
+                {
+                    PluginLog.Error(
+                        $"[MxHaptics] Event category '{category}' has no settings section - " +
+                        "its events cannot be configured.");
+                }
+            }
         }
 
         /// <summary>Height a grid needs to show every row without scrolling.</summary>

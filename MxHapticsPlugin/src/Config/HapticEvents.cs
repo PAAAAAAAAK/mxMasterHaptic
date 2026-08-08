@@ -93,6 +93,16 @@ namespace Loupedeck.MxHapticsPlugin.Config
         public const String DragRightEnd = "drag.right.end";
         public const String ScreenEdge = "cursor.screenEdge";
 
+        // NOTE: hover-over-element feedback was implemented and removed. UI
+        // Automation reports only coarse containers (Group, ToolBar, Pane) for the
+        // applications where hovering would actually be useful - Chrome does not
+        // build a detailed accessibility tree unless a screen reader is present or
+        // it is launched with --force-renderer-accessibility, so a web page reads
+        // as one anonymous Group with no links or buttons in it.
+        // Making it work would require per-application integrations (a browser
+        // extension and so on), which is precisely the app-scoped compromise this
+        // plugin exists to avoid.
+
         public static readonly HapticEventDef[] All =
         {
             new(MouseLeft, "Clicks", "Left click", Waveforms.SubtleCollision),
