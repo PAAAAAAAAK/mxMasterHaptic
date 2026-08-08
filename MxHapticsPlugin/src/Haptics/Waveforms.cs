@@ -54,6 +54,30 @@ namespace Loupedeck.MxHapticsPlugin.Haptics
         };
 
         /// <summary>
+        /// How a waveform behaves, and therefore where it is usable.
+        /// </summary>
+        /// <remarks>
+        /// Logitech groups these by intent ("alert", "state change"). That is the
+        /// wrong axis for us: what actually decides whether a waveform works on a
+        /// left click is how LONG and how SHARP it is. A click repeats thousands of
+        /// times a day, so anything lengthy becomes intolerable; a rare system
+        /// event can afford something elaborate.
+        ///
+        /// Surfaced in the settings dropdown so the choice is informed rather than
+        /// a guess from the name. Deliberately advisory - nothing is forbidden,
+        /// because feel is subjective and the hardware allows it.
+        /// </remarks>
+        public static String CharacterOf(String waveform) => waveform switch
+        {
+            SubtleCollision or DampCollision or SharpCollision or SharpStateChange or Square => "short",
+            DampStateChange or HappyAlert or Knock or Wave => "medium",
+            _ => "long",
+        };
+
+        /// <summary>True if a waveform is short enough to repeat on clicks and scroll.</summary>
+        public static Boolean IsClickGrade(String waveform) => CharacterOf(waveform) == "short";
+
+        /// <summary>
         /// Maps a waveform to the plugin event name that plays it.
         /// </summary>
         /// <remarks>

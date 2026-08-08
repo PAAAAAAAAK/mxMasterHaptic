@@ -32,15 +32,29 @@ namespace Loupedeck.MxHapticsPlugin.Config
 
         public Boolean DefaultEnabled { get; }
 
+        /// <summary>
+        /// Events that form one gesture, e.g. a drag's start and end.
+        /// </summary>
+        /// <remarks>
+        /// Purely presentational. Grouped events stay INDEPENDENTLY toggleable and
+        /// separately configurable on purpose - the same button does different jobs
+        /// in different applications, and wanting the "grab" without the "let go"
+        /// is a reasonable preference. The group only tells the settings window to
+        /// show them as belonging together, so the relationship is visible without
+        /// taking the choice away.
+        /// </remarks>
+        public String GroupKey { get; }
+
         public HapticEventDef(
             String id, String category, String displayName,
-            String defaultWaveform, Boolean defaultEnabled = true)
+            String defaultWaveform, Boolean defaultEnabled = true, String groupKey = null)
         {
             this.Id = id;
             this.Category = category;
             this.DisplayName = displayName;
             this.DefaultWaveform = defaultWaveform;
             this.DefaultEnabled = defaultEnabled;
+            this.GroupKey = groupKey;
         }
 
         /// <summary>Label shown in the editor's event dropdown.</summary>
@@ -67,6 +81,18 @@ namespace Loupedeck.MxHapticsPlugin.Config
         public const String ScrollVertical = "scroll.vertical";
         public const String ScrollHorizontal = "scroll.horizontal";
 
+        // --- Stage 3: gestures and system events ---------------------------------
+        // Drag is per-button: left is the everyday case, while middle and right
+        // drag are orbit/pan gestures in CAD and 3D tools where constant haptics
+        // would be unwelcome. Ids are stable - see HapticEventDef.Id.
+        public const String DragLeftStart = "drag.left.start";
+        public const String DragLeftEnd = "drag.left.end";
+        public const String DragMiddleStart = "drag.middle.start";
+        public const String DragMiddleEnd = "drag.middle.end";
+        public const String DragRightStart = "drag.right.start";
+        public const String DragRightEnd = "drag.right.end";
+        public const String ScreenEdge = "cursor.screenEdge";
+
         public static readonly HapticEventDef[] All =
         {
             new(MouseLeft, "Clicks", "Left click", Waveforms.SubtleCollision),
@@ -92,6 +118,33 @@ namespace Loupedeck.MxHapticsPlugin.Config
             // physical detents, so the haptic is the ONLY thing providing a sense
             // of discrete steps. A soft waveform there just reads as vibration.
             new(ScrollHorizontal, "Scroll", "Thumb wheel", Waveforms.SharpCollision),
+
+            // Drag start/end bracket a gesture, so they want to feel like a pair:
+            // a firmer "grab" and a softer "let go". Grouped for display, but each
+            // stays independently switchable.
+            new(DragLeftStart, "Gestures", "Drag (left)  -  start", Waveforms.SharpStateChange,
+                groupKey: "drag.left"),
+            new(DragLeftEnd, "Gestures", "Drag (left)  -  end", Waveforms.DampStateChange,
+                groupKey: "drag.left"),
+
+            // Middle and right drag are OFF by default. In CAD and 3D modelling
+            // they are the orbit and pan gestures - held down and moved constantly -
+            // so haptics there would be relentless for exactly the people who use
+            // them most. Available for anyone who wants them, imposed on no one.
+            new(DragMiddleStart, "Gestures", "Drag (middle)  -  start", Waveforms.SharpStateChange,
+                defaultEnabled: false, groupKey: "drag.middle"),
+            new(DragMiddleEnd, "Gestures", "Drag (middle)  -  end", Waveforms.DampStateChange,
+                defaultEnabled: false, groupKey: "drag.middle"),
+            new(DragRightStart, "Gestures", "Drag (right)  -  start", Waveforms.SharpStateChange,
+                defaultEnabled: false, groupKey: "drag.right"),
+            new(DragRightEnd, "Gestures", "Drag (right)  -  end", Waveforms.DampStateChange,
+                defaultEnabled: false, groupKey: "drag.right"),
+
+            // Hitting the edge of the desktop is the one place a mouse has a real
+            // physical boundary with no feedback at all. Off by default: it fires
+            // during ordinary cursor movement rather than on a deliberate action,
+            // so it should be opted into rather than sprung on people.
+            new(ScreenEdge, "Gestures", "Screen edge", Waveforms.SubtleCollision, defaultEnabled: false),
         };
 
         private static readonly Dictionary<String, HapticEventDef> ById =

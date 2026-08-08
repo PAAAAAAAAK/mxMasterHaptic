@@ -56,16 +56,7 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
                     {
                         var existing = this._form;
 
-                        existing.BeginInvoke(new Action(() =>
-                        {
-                            if (existing.WindowState == FormWindowState.Minimized)
-                            {
-                                existing.WindowState = FormWindowState.Normal;
-                            }
-
-                            existing.Activate();
-                            existing.BringToFront();
-                        }));
+                        existing.BeginInvoke(new Action(() => BringToFront(existing)));
 
                         return;
                     }
@@ -77,6 +68,36 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
                     PluginLog.Error($"[MxHaptics] Failed to open settings window: {ex}");
                 }
             }
+        }
+
+        /// <summary>
+        /// Raises a window above whatever currently has focus.
+        /// </summary>
+        /// <remarks>
+        /// Windows deliberately stops a background process from stealing focus, so
+        /// Activate() alone typically just flashes the taskbar button - the plugin
+        /// is hosted by LogiPluginService, which is never the foreground process.
+        ///
+        /// Briefly marking the form topmost places it above the current window, and
+        /// clearing the flag immediately afterwards means it does not then hover
+        /// over everything for the rest of its life.
+        /// </remarks>
+        private static void BringToFront(Form form)
+        {
+            if (form is not { IsDisposed: false })
+            {
+                return;
+            }
+
+            if (form.WindowState == FormWindowState.Minimized)
+            {
+                form.WindowState = FormWindowState.Normal;
+            }
+
+            form.TopMost = true;
+            form.Activate();
+            form.BringToFront();
+            form.TopMost = false;
         }
 
         private void StartUiThread()
@@ -93,6 +114,11 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
 
                     this._form = new SettingsForm(this._settings, this._haptics);
                     this._form.FormClosed += (_, _) => this._form = null;
+
+                    // Also needed on FIRST open: the window is created by a
+                    // background service, so without this it can appear behind
+                    // whatever the user was looking at.
+                    this._form.Shown += (s, _) => BringToFront((Form)s);
 
                     ready.Set();
 
