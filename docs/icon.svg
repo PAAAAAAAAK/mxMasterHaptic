@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="MX Haptics app icon">
+  <!-- Source of truth for metadata/Icon256x256.png. Re-render after editing.
+       Values are the defaults from the Claude Design project "MX Haptics App Icon":
+       bg #4A2CC4, fg #F7F5FF, corner radius 56. -->
+  <rect x="0" y="0" width="256" height="256" rx="56" fill="#4A2CC4"/>
+
+  <!-- Mouse body, tilted slightly so it reads as an object rather than a pill -->
+  <g transform="rotate(-12 128 132)">
+    <path d="M 90,116 A 38 38 0 0 1 166,116 L 166,160 A 26 26 0 0 1 140,186 L 116,186 A 26 26 0 0 1 90,160 Z" fill="#F7F5FF"/>
+    <!-- Scroll wheel, knocked out in the background colour -->
+    <path d="M 128,96 L 128,116" stroke="#4A2CC4" stroke-width="11" stroke-linecap="round" fill="none"/>
+  </g>
+
+  <!-- Vibration marks: symmetrical on both sides so they read as haptics
+       rather than as wifi or sound radiating in one direction -->
+  <g stroke="#F7F5FF" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none">
+    <path d="M 70,100 L 50,117 L 70,134 L 50,151 L 70,168" transform="rotate(-10 60 134)"/>
+    <path d="M 186,100 L 206,117 L 186,134 L 206,151 L 186,168" transform="rotate(10 196 134)"/>
+  </g>
+</svg>
