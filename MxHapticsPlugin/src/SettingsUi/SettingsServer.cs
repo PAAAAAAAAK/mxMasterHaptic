@@ -157,6 +157,15 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
                         await writer.WriteLineAsync("OK").ConfigureAwait(false);
                         break;
 
+                    case "PING":
+                        // Lets the settings application detect that the plugin has
+                        // gone away. Without it, that process outlives an unload and
+                        // keeps its own executable locked inside the plugin folder -
+                        // which blocks Logi Options+ from deleting the folder during
+                        // uninstall, leaving a half-removed plugin behind.
+                        await writer.WriteLineAsync("OK").ConfigureAwait(false);
+                        break;
+
                     case "BYE":
                         return;
 

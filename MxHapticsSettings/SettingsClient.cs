@@ -23,6 +23,16 @@ namespace MxHapticsSettings
         private readonly StreamReader _reader;
         private readonly StreamWriter _writer;
 
+        /// <summary>
+        /// Serialises pipe access.
+        /// </summary>
+        /// <remarks>
+        /// The UI thread issues Set and Play while a background watcher issues
+        /// Ping. A request/response protocol on one duplex stream cannot tolerate
+        /// two callers interleaving - one would read the other's reply.
+        /// </remarks>
+        private readonly Object _gate = new();
+
         private SettingsClient(NamedPipeClientStream pipe)
         {
             this._pipe = pipe;
@@ -55,24 +65,27 @@ namespace MxHapticsSettings
         {
             var result = new Dictionary<String, (Boolean, String)>(StringComparer.OrdinalIgnoreCase);
 
-            this._writer.WriteLine("GET");
-
-            while (true)
+            lock (this._gate)
             {
-                var line = this._reader.ReadLine();
+                this._writer.WriteLine("GET");
 
-                // "." terminates the list; null means the plugin went away
-                // mid-read, which is survivable - we just show what we have.
-                if (line == null || line == ".")
+                while (true)
                 {
-                    break;
-                }
+                    var line = this._reader.ReadLine();
 
-                var parts = line.Split('|');
+                    // "." terminates the list; null means the plugin went away
+                    // mid-read, which is survivable - we just show what we have.
+                    if (line == null || line == ".")
+                    {
+                        break;
+                    }
 
-                if (parts.Length >= 3)
-                {
-                    result[parts[0]] = (Boolean.TryParse(parts[1], out var on) && on, parts[2]);
+                    var parts = line.Split('|');
+
+                    if (parts.Length >= 3)
+                    {
+                        result[parts[0]] = (Boolean.TryParse(parts[1], out var on) && on, parts[2]);
+                    }
                 }
             }
 
@@ -81,15 +94,56 @@ namespace MxHapticsSettings
 
         public void Set(String eventId, Boolean enabled, String waveform)
         {
-            this._writer.WriteLine($"SET|{eventId}|{enabled}|{waveform}");
-            this._reader.ReadLine();
+            lock (this._gate)
+            {
+                this._writer.WriteLine($"SET|{eventId}|{enabled}|{waveform}");
+                this._reader.ReadLine();
+            }
         }
 
         /// <summary>Asks the plugin to play a waveform, for live preview.</summary>
         public void Play(String waveform)
         {
-            this._writer.WriteLine($"PLAY|{waveform}");
-            this._reader.ReadLine();
+            lock (this._gate)
+            {
+                this._writer.WriteLine($"PLAY|{waveform}");
+                this._reader.ReadLine();
+            }
+        }
+
+        /// <summary>
+        /// Returns false once the plugin is no longer reachable.
+        /// </summary>
+        /// <remarks>
+        /// This window must not outlive the plugin. It runs from an executable
+        /// inside the plugin's own folder, so while it is alive Windows cannot
+        /// delete that folder - which would leave Logi Options+ unable to fully
+        /// uninstall the plugin, and a stale folder behind on disk.
+        ///
+        /// IsConnected alone is not enough: it does not go false until an I/O
+        /// operation actually fails, so an explicit round trip is needed.
+        /// </remarks>
+        public Boolean Ping()
+        {
+            lock (this._gate)
+            {
+                try
+                {
+                    if (!this._pipe.IsConnected)
+                    {
+                        return false;
+                    }
+
+                    this._writer.WriteLine("PING");
+
+                    // A null reply means the far end closed the pipe.
+                    return this._reader.ReadLine() != null;
+                }
+                catch (Exception)
+                {
+                    return false;
+                }
+            }
         }
 
         public void Dispose()

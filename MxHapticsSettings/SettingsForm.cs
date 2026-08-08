@@ -46,12 +46,63 @@ namespace MxHapticsSettings
             public String Display { get; init; }
         }
 
+        private readonly System.Threading.CancellationTokenSource _watchdog = new();
+
         public SettingsForm(SettingsClient client, Dictionary<String, (Boolean, String)> values)
         {
             this._client = client;
             this._values = values;
 
             this.BuildLayout();
+            this.StartPluginWatchdog();
+        }
+
+        /// <summary>
+        /// Closes this window once the plugin is gone.
+        /// </summary>
+        /// <remarks>
+        /// This process runs from an executable inside the plugin's own folder, so
+        /// while it is alive Windows cannot delete that folder. If the user left
+        /// this window open and then uninstalled the plugin, Logi Options+ would
+        /// fail to remove it and leave a half-uninstalled plugin on disk.
+        ///
+        /// Polling on a background thread rather than a UI timer: the ping is a
+        /// blocking pipe round trip, and a hung plugin must not freeze the window.
+        /// </remarks>
+        private void StartPluginWatchdog()
+        {
+            var token = this._watchdog.Token;
+
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                while (!token.IsCancellationRequested)
+                {
+                    token.WaitHandle.WaitOne(TimeSpan.FromSeconds(2));
+
+                    if (token.IsCancellationRequested || this._client.Ping())
+                    {
+                        continue;
+                    }
+
+                    // Plugin has gone: unloaded, reloaded, or being uninstalled.
+                    try
+                    {
+                        this.BeginInvoke(new Action(this.Close));
+                    }
+                    catch (Exception)
+                    {
+                        // Window already tearing down; nothing to do.
+                    }
+
+                    return;
+                }
+            });
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            this._watchdog.Cancel();
+            base.OnFormClosing(e);
         }
 
         private (Boolean Enabled, String Waveform) ValueFor(String eventId)
