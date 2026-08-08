@@ -1,0 +1,10 @@
+# Build output (also covered by MxHapticsPlugin/.gitignore)
+[Bb]in/
+[Oo]bj/
+
+# Scratch / session notes
+prompt.txt
+
+# OS
+.DS_Store
+Thumbs.db

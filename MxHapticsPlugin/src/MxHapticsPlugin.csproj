@@ -1,0 +1,90 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- NOTE: LogiPluginTool 6.1.4 scaffolds net8.0, but the installed
+         PluginApi.dll (6.4.0.3079) is built against .NET 10. Compiling against
+         it from net8.0 fails with CS1705. Must match the Plugin Service runtime. -->
+    <!-- net10.0-windows (not plain net10.0) so the bundled settings window can use
+         WinForms. The build is already Windows-only via RuntimeIdentifier below;
+         macOS support would mean multi-targeting and a platform-specific settings
+         UI, which the IInputSource seam keeps possible. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <RootNamespace>Loupedeck.MxHapticsPlugin</RootNamespace>
+
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+
+    <!-- SharpHook ships a native uiohook binary per runtime identifier. Without a
+         RID pinned, ALL of them are copied to runtimes/*/native/ and the Logi
+         Plugin Service's assembly resolver picks the first match it finds -
+         observed loading win-arm64/native/uiohook.dll on this x64 machine, which
+         silently produced a hook that never delivered events.
+         Pinning the RID makes only the correct native binary ship. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+
+    <!-- Keep the output at bin/ rather than bin/win-x64/. Setting a RID otherwise
+         appends it to the output path, which would shift everything one level
+         and break 'pluginFolderWin: bin' in LoupedeckPackage.yaml. -->
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+
+    <PluginApiDir Condition="$(OS) == 'Windows_NT'">C:\Program Files\Logi\LogiPluginService\</PluginApiDir>
+    <PluginApiDir Condition="$(OS) != 'Windows_NT'">/Applications/Utilities/LogiPluginService.app/Contents/MonoBundle/</PluginApiDir>
+
+    <PluginDir Condition="$(OS) == 'Windows_NT'">$(LocalAppData)\Logi\LogiPluginService\Plugins\</PluginDir>
+    <PluginDir Condition="$(OS) != 'Windows_NT'">~/Library/Application\ Support/Logi/LogiPluginService/Plugins/</PluginDir>
+
+    <BaseOutputPath>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\bin\'))</BaseOutputPath>
+    <OutputPath>$(BaseOutputPath)$(Configuration)\bin\</OutputPath>
+
+    <PluginShortName>MxHaptics</PluginShortName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="PluginApi">
+      <HintPath>$(PluginApiDir)PluginApi.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpHook" Version="7.1.3" />
+  </ItemGroup>
+
+  <Target Name="CopyPackage" AfterTargets="PostBuildEvent">
+    <Message Text="📦 Copying package files..." Importance="High" />
+    <ItemGroup>
+      <PackageFiles Include="package\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PackageFiles)" DestinationFolder="$(OutputPath)..\%(RecursiveDir)" />
+    <Message Text="✅ Package files copied to $(OutputPath)..\" Importance="High" />
+  </Target>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Condition="$(OS) == 'Windows_NT'" Command="echo $(BaseOutputPath)$(Configuration)\ &gt; &quot;$(PluginDir)$(ProjectName).link&quot;" />
+    <Exec Condition="$(OS) != 'Windows_NT'" Command="echo $(BaseOutputPath)$(Configuration)\ &gt; $(PluginDir)$(ProjectName).link" />
+    <Message Text="🔨 Created plugin link at: $(PluginDir)$(ProjectName).link" Importance="High" />
+
+    <Message Text="🔄 Sending plugin reload command for $(PluginShortName) to Logi Plugin Service" Importance="High" />
+    <Exec Condition="$(OS) == 'Windows_NT'" Command="start loupedeck:plugin/$(PluginShortName)/reload" ContinueOnError="true" />
+    <Exec Condition="$(OS) != 'Windows_NT'" Command="open loupedeck:plugin/$(PluginShortName)/reload" ContinueOnError="true" />
+    <Message Condition="'$(MSBuildLastTaskResult)' == 'false'" Text="❌ Couldn't reload the plugin, please restart the Logi Plugin Service manually" Importance="High" />
+  </Target>
+
+  <Target Name="PluginClean" AfterTargets="CoreClean">
+    <Message Text="🧹 Cleaning up plugin link file and output directories..." Importance="High" />
+
+    <Delete Condition="$(OS) == 'Windows_NT'" Files="$(PluginDir)$(ProjectName).link" />
+    <Exec Condition="$(OS) != 'Windows_NT'" Command="rm -f $(PluginDir)$(ProjectName).link" />
+
+    <RemoveDir Directories="$(OutputPath)..\" />
+
+    <Message Text="🧼 Plugin link file and output directories have been cleaned!" Importance="High" />
+  </Target>
+
+</Project>

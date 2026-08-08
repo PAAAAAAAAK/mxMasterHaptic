@@ -1,0 +1,76 @@
+# ==================================================================================================
+# HAPTIC EVENT MAPPING
+# ==================================================================================================
+# Maps each plugin event to the haptic waveform the device should play.
+#
+# DEFAULT      - fallback used when no device-specific mapping matches.
+# MX Master 4  - device-specific override. Currently the ONLY Logitech mouse
+#                with a haptic motor controllable via the Actions SDK.
+#
+# Here each event maps to its own namesake waveform, deliberately: this file is
+# the palette, and the runtime picks which entry to play. Requires
+# 'HasHapticMapping' in metadata/LoupedeckPackage.yaml.
+
+haptics:
+    # --- Click-grade -------------------------------------------------------------
+    hx_subtle_collision:
+        DEFAULT: subtle_collision
+        MX Master 4: subtle_collision
+
+    hx_damp_collision:
+        DEFAULT: damp_collision
+        MX Master 4: damp_collision
+
+    hx_sharp_collision:
+        DEFAULT: sharp_collision
+        MX Master 4: sharp_collision
+
+    hx_sharp_state_change:
+        DEFAULT: sharp_state_change
+        MX Master 4: sharp_state_change
+
+    hx_square:
+        DEFAULT: square
+        MX Master 4: square
+
+    # --- Accent ------------------------------------------------------------------
+    hx_damp_state_change:
+        DEFAULT: damp_state_change
+        MX Master 4: damp_state_change
+
+    hx_happy_alert:
+        DEFAULT: happy_alert
+        MX Master 4: happy_alert
+
+    hx_knock:
+        DEFAULT: knock
+        MX Master 4: knock
+
+    hx_wave:
+        DEFAULT: wave
+        MX Master 4: wave
+
+    # --- Event -------------------------------------------------------------------
+    hx_angry_alert:
+        DEFAULT: angry_alert
+        MX Master 4: angry_alert
+
+    hx_completed:
+        DEFAULT: completed
+        MX Master 4: completed
+
+    hx_firework:
+        DEFAULT: firework
+        MX Master 4: firework
+
+    hx_mad:
+        DEFAULT: mad
+        MX Master 4: mad
+
+    hx_jingle:
+        DEFAULT: jingle
+        MX Master 4: jingle
+
+    hx_ringing:
+        DEFAULT: ringing
+        MX Master 4: ringing

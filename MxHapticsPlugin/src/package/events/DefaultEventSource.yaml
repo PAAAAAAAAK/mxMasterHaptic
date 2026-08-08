@@ -1,0 +1,78 @@
+# ==================================================================================================
+# PLUGIN EVENT SOURCE
+# ==================================================================================================
+# Declares every event this plugin can raise. Each event is mapped to a haptic
+# waveform in events/extra/eventMapping.yaml.
+#
+# WHY ONE EVENT PER WAVEFORM:
+# eventMapping.yaml binds a waveform to an event NAME, statically. So a single
+# event could only ever play one fixed waveform. By declaring one event per
+# waveform we turn that static mapping into a palette the code can choose from
+# at runtime - RaiseEvent("hx_<waveform>") picks the feel.
+#
+# Event names MUST match exactly across this file, eventMapping.yaml, and code.
+# Ordered subtlest -> most dramatic.
+
+events:
+    # --- Click-grade: short, single, repeatable at speed -------------------------
+    - name: hx_subtle_collision
+      displayName: Subtle Collision
+      description: Low-intensity light contact
+
+    - name: hx_damp_collision
+      displayName: Damp Collision
+      description: Medium intensity with gradual decay
+
+    - name: hx_sharp_collision
+      displayName: Sharp Collision
+      description: High-intensity impact
+
+    - name: hx_sharp_state_change
+      displayName: Sharp State Change
+      description: High-intensity discrete pulse
+
+    - name: hx_square
+      displayName: Square
+      description: Sharp-edged, defined start and stop
+
+    # --- Accent: short/medium, occasional ----------------------------------------
+    - name: hx_damp_state_change
+      displayName: Damp State Change
+      description: Gradual, smooth transition
+
+    - name: hx_happy_alert
+      displayName: Happy Alert
+      description: Short positive pattern
+
+    - name: hx_knock
+      displayName: Knock
+      description: Repetitive impact
+
+    - name: hx_wave
+      displayName: Wave
+      description: Smooth sinusoidal
+
+    # --- Event: long, attention-grabbing, rare -----------------------------------
+    - name: hx_angry_alert
+      displayName: Angry Alert
+      description: Harsh attention-grabbing pattern
+
+    - name: hx_completed
+      displayName: Completed
+      description: Task completion confirmation
+
+    - name: hx_firework
+      displayName: Firework
+      description: Multi-burst with varying intensity
+
+    - name: hx_mad
+      displayName: Mad
+      description: High-frequency chaotic pattern
+
+    - name: hx_jingle
+      displayName: Jingle
+      description: Multiple tones
+
+    - name: hx_ringing
+      displayName: Ringing
+      description: Continuous oscillating
