@@ -14,11 +14,10 @@ actually do with a mouse, everywhere you do them.
 - **Yours to tune.** Every input can be switched off or given a different
   waveform, with a live preview so you choose by feel rather than by name.
 
-### ⬇ [Download MX Haptics 1.0](https://github.com/PAAAAAAAAK/mxMasterHaptic/releases/download/v1.0.0/MxHaptics_1.0.lplug4)
+### ⬇ [Download MX Haptics](https://github.com/PAAAAAAAAK/mxMasterHaptic/releases)
 
-Double-click the downloaded file, then **confirm the prompt in Logi Options+**.
-Needs an MX Master 4, Logi Options+, and Windows x64.
-[All releases →](https://github.com/PAAAAAAAAK/mxMasterHaptic/releases)
+Grab the latest `.lplug4`, double-click it, then **confirm the prompt in Logi
+Options+**. Needs an MX Master 4, Logi Options+, and Windows x64.
 
 <p align="center">
   <img src="docs/settings-window.png" alt="MX Haptics settings window" width="520">
@@ -59,13 +58,21 @@ The haptic supplies the detents the hardware doesn't have.
 
 ## Installing
 
-1. [**Download `MxHaptics_1.0.lplug4`**](https://github.com/PAAAAAAAAK/mxMasterHaptic/releases/download/v1.0.0/MxHaptics_1.0.lplug4)
-   (or pick a version from [all releases](https://github.com/PAAAAAAAAK/mxMasterHaptic/releases)).
+1. Download the latest `.lplug4` from
+   [Releases](https://github.com/PAAAAAAAAK/mxMasterHaptic/releases).
 2. Double-click it.
 3. **Confirm the install prompt that appears in Logi Options+.**
 
 Step 3 is easy to miss — the prompt opens in Options+, not next to the file, so
 it can look as though nothing happened.
+
+That's it: clicks and scroll start responding immediately, with no setup.
+
+**If it feels too strong or too weak**, that's Logitech's own setting rather than
+ours: Options+ → your mouse → **Haptic feedback** → **Haptic intensity**
+(Subtle / Low / Medium / High). It scales everything, including this plugin. Use
+the plugin's own settings to change *which* waveform each input plays; use
+Options+ to change how hard the motor hits.
 
 To uninstall, right-click the same `.lplug4` and choose **Uninstall Plugin**.
 
@@ -91,8 +98,11 @@ the action that triggered it and the motor is still running when the next click
 arrives, so those are left out rather than offered as a trap. Gestures, which
 happen once per deliberate movement, get the full set.
 
-Overall haptic **strength** is Logitech's own setting: Options+ → *Haptic
-intensity* (Subtle / Low / Medium / High). This plugin doesn't duplicate it.
+There is deliberately no strength control here. Logitech already provides one —
+Options+ → *Haptic intensity* — and it scales every haptic on the device,
+including this plugin's. Duplicating it would give you two settings that fight
+each other. Choose *which* waveform an input plays here; choose *how hard* the
+motor hits in Options+.
 
 ## Privacy and security
 
