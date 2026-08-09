@@ -171,18 +171,6 @@ All are already handled, but each cost real time to diagnose:
 Also note `Assembly.Location` is **empty** for a loaded plugin — the service uses
 a collectible load context. Use the SDK's `AssemblyFilePath` instead.
 
-## Why there's no hover feedback
-
-Hover-over-element haptics were built and removed. UI Automation reports only
-coarse containers (`Group`, `ToolBar`, `Pane`) for the applications where
-hovering would actually be useful: Chrome doesn't build a detailed accessibility
-tree unless a screen reader is present, so a whole web page reads as one
-anonymous `Group` with no links or buttons in it.
-
-Making it work would need per-application integrations — a browser extension, an
-Electron hook, and so on. That would mean one app working and a thousand not,
-which is the opposite of what this plugin is for.
-
 ## Roadmap
 
 - [x] Click haptics (5 buttons)

@@ -93,15 +93,13 @@ namespace Loupedeck.MxHapticsPlugin.Config
         public const String DragRightEnd = "drag.right.end";
         public const String ScreenEdge = "cursor.screenEdge";
 
-        // NOTE: hover-over-element feedback was implemented and removed. UI
-        // Automation reports only coarse containers (Group, ToolBar, Pane) for the
-        // applications where hovering would actually be useful - Chrome does not
-        // build a detailed accessibility tree unless a screen reader is present or
-        // it is launched with --force-renderer-accessibility, so a web page reads
-        // as one anonymous Group with no links or buttons in it.
-        // Making it work would require per-application integrations (a browser
-        // extension and so on), which is precisely the app-scoped compromise this
-        // plugin exists to avoid.
+        // NOTE: hover-over-element feedback is deliberately absent, and it is NOT
+        // a technical limitation - UI Automation can identify clickable elements
+        // universally. It is left out because it fires on every element the
+        // cursor lands on, including elements that arrive under a STATIONARY
+        // cursor while scrolling a list, which no dwell delay can filter out.
+        // Before attempting it, read this note's own commit history: it records
+        // the two traps that made an earlier attempt look impossible.
 
         public static readonly HapticEventDef[] All =
         {
