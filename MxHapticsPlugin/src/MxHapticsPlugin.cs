@@ -124,6 +124,12 @@ namespace Loupedeck.MxHapticsPlugin
             // bound. This is the payoff - a global mouse hook drives it, so haptics
             // fire in every application rather than only when a device button bound
             // in Logi Options+ is pressed.
+            // MUST happen before any hook is created. SharpHook's native library
+            // cannot be unloaded once mapped into the Plugin Service process, so
+            // loading it from the plugin folder would lock a file there and make
+            // uninstalling the plugin fail.
+            NativeLibraryRedirect.Configure(System.IO.Path.GetDirectoryName(this.AssemblyFilePath));
+
             this._inputSources.Add(new MouseInputSource(this._haptics, this.Settings));
 
             foreach (var source in this._inputSources)
