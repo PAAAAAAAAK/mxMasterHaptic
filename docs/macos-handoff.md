@@ -9,6 +9,11 @@ Read this, then read `git log` on this branch. The commit messages carry the
 reasoning behind every decision, not just the changes — they are the real
 documentation and are worth reading in full before changing anything.
 
+**Updated 2026-08-10, first session actually on the Mac.** The two verifications
+this document used to open with are answered (facts 6–8), the thumb buttons are
+closed rather than open, and two decisions were taken that change the plan — see
+*Decisions taken on the Mac*. No code has changed yet.
+
 ---
 
 ## Where the port stands
@@ -20,7 +25,9 @@ MX Master 4 over Bluetooth.
 thumb-wheel scroll, and the settings window. Haptics fire in every application.
 The event tap survives sustained use with no OS timeouts.
 
-**Not working:** the **back and forward thumb buttons** produce nothing.
+**Not possible:** the **back and forward thumb buttons**. Established on device
+and closed — see fact 6. They are being removed from the macOS catalogue rather
+than left as settings that can never fire.
 
 **Not implemented:** screen-edge haptics on macOS. `MouseInputSource` reads
 virtual-desktop bounds via `GetSystemMetrics`, which has no macOS equivalent
@@ -95,73 +102,132 @@ Momentum-phase events are skipped — that is inertial scrolling the OS continue
 after the wheel stops, and it was the bulk of the over-firing. Current pacing is
 the 50 ms cooldown, reported as good in use.
 
+### 6. The thumb buttons are unreachable, and this is now measured
+
+Established on device 2026-08-10, on the Mac, against the live v1.0.104 build.
+This closes the question rather than narrowing it. Do not reopen it without new
+information — every available observation point was tried:
+
+| Observation point | Back / forward |
+|---|---|
+| `CGEventTap`, session level | absent |
+| `CGEventTap`, **HID level, first tap in the system** | absent |
+| `IOHIDManager`, parsed input values | **absent** (buttons 1,2,3 fire) |
+| `IOHIDManager`, **raw input reports** (534 captured) | **absent** |
+
+The presses never enter the HID interface at all, so there is nothing for any
+client to read. Options+ receives them over a private channel — not HID++, since
+zero `reportID=17` notifications appeared while the buttons were pressed. The
+buttons *do* work: they navigate, so Options+ is actively converting them.
+
+Two corollaries worth keeping:
+
+- **No framework changes this.** A native Swift app calls the same APIs and gets
+  the same nothing. The wall is below the API layer.
+- The one untried lever is unbinding back/forward inside Options+, which might
+  stop the diversion. **Deliberately not pursued** — changing a user's Options+
+  defaults is not something this plugin should require.
+
+### 7. `CGGetEventTapList` settles the tap-ordering question
+
+22 active taps. **Ours is index 0** — first in the entire system, HID level,
+listen-only, enabled. More conclusive than the ordering argument: *no tap
+anywhere, in any process, carries `OtherMouseDown` in an **active** (swallowing)
+mask*. Options+'s only active HID tap covers left/right/keys/scroll, excludes
+OtherMouse, and is disabled. The "Options+ consumes them with its own tap"
+theory is dead by direct evidence, not by elimination.
+
+### 8. LogiPluginService does NOT hold Input Monitoring
+
+From the system TCC database, which is where `kTCCServiceListenEvent` lives:
+
+```
+kTCCServiceListenEvent | com.logi.cp-dev-mgr    | 2 (allowed)   <- Options+
+kTCCServiceListenEvent | com.logi.pluginservice | ABSENT        <- us
+kTCCServiceAccessibility | com.logi.pluginservice | 2 (allowed) <- confirms the method
+```
+
+Absent, not denied — never prompted, so System Settings shows no row for it.
+Options+ holding it is a *different bundle* and does not carry to us. Our plugin
+runs in pid `com.logi.pluginservice` (`/Applications/Utilities/LogiPluginService.app`),
+confirmed by `lsof` holding the plugin directory and the settings pipe.
+
+Measured consequence: `IOHIDDeviceOpen` returns `kIOReturnNotPermitted` without
+it, and element enumeration is blocked too. With it granted, the same call
+returns `kIOReturnSuccess` **alongside a running Options+** — so the device is
+*not* held exclusively, and non-exclusive HID access genuinely works.
+
 ---
 
 ## The mission
 
-### 0. Two answers still outstanding — get these first
+The two verifications this document used to open with are **answered** — see
+established facts 6, 7 and 8. What follows is what remains.
 
-```bash
-grep 'Event tap created' ~/Library/Application\ Support/Logi/LogiPluginService/Logs/plugin_logs/MxHaptics.log
-```
+### 1. Back / forward — CLOSED, not deferred
 
-Must say **HID level**. If it says *session level*, the HID tap was refused and
-the reasoning in step 1 below is void — start there instead.
+Unreachable by every available means. See fact 6 for the evidence table. The
+decision taken is to **remove `mouse.back` and `mouse.forward` from the macOS
+catalogue entirely** rather than ship two settings rows that can never fire.
+The ids stay in the catalogue for Windows, where they work — a rename or
+deletion there would orphan saved preferences.
 
-Then: **System Settings → Privacy & Security → Input Monitoring** — is
-`LogiPluginService` listed, and enabled? This decides whether the main task below
-is a clean win or introduces a manual setup step.
+Reopening this needs *new information*, not another attempt at the same APIs.
 
-### 1. Back / forward buttons — why they are gone
+### 2. IOHIDManager — half the prize is real, and it is the half nobody has
 
-Middle click arrives as `buttonNumber=2`. Nothing with `buttonNumber` 3 or 4 has
-ever been delivered, across thousands of logged events.
+The thumb-button half is gone (fact 6). What survives is the part that was
+always the genuine differentiator:
 
-Two theories were considered:
+**Device filtering.** `WH_MOUSE_LL` on Windows and `CGEventTap` on macOS both
+deliver input already merged across every pointing device, so today the
+MX Master buzzes when you use the trackpad. BetterClick Haptics has the same
+flaw, so this is the state of the art rather than a defect of ours.
 
-- **Options+ converts them to `Cmd+[` / `Cmd+]` keystrokes** at the driver level,
-  so they never become mouse events.
-- **Options+ consumes them with its own event tap** before we see them.
+`IOHIDManager` solves it, and it **works**: `kIOReturnSuccess`, non-exclusive,
+alongside a running Options+, with reports tagged per device (fact 8). Buttons
+1/2/3, movement and scroll all arrive cleanly on `reportID=2`.
 
-The second looks **ruled out by elimination**: our tap is at `kCGHIDEventTap`
-with `kCGHeadInsertEventTap`, and LPS starts *after* Options+, so our tap is the
-newest and therefore first — ahead of any tap Options+ owns. We still see
-nothing. That leaves an IOKit HID driver claiming the device and synthesising
-the keystroke, with no mouse CGEvent ever created.
+**The blocker is Input Monitoring, which LogiPluginService does not hold.** That
+is the product decision, and it is still open:
 
-**Verify this rather than trusting it.** `CGGetEventTapList()` enumerates every
-active tap with its process, location, mask and whether it filters — that would
-settle it directly. Useful tools: `ioreg -p IOUSB -l`, `hidutil list`,
-`log stream --predicate 'subsystem contains "hid"'`.
+- We cannot reliably prompt for it — a background plugin host may be denied
+  silently rather than shown a dialog. **Untested from inside LPS**; testing it
+  needs a build that calls `IOHIDDeviceOpen` there and logs the `IOReturn`.
+- The manual path is ugly: System Settings → Input Monitoring → "+" → browse to
+  `/Applications/Utilities/LogiPluginService.app`.
+- A hybrid degrades gracefully — use IOHIDManager when permitted, fall back to
+  the CGEventTap that works today — at the cost of two input paths and
+  behaviour that differs between users.
 
-### 2. IOHIDManager — the actual prize
+Device is **VID `0x046D`, PID `0xB042`**, Bluetooth LE. Only one Logitech device
+is present on the test machine, so the MX Master 3 concern is currently moot.
 
-Reading HID reports from the device directly would solve **two** problems at
-once, and no competing plugin has solved either:
+### 3. Unaccelerated scroll detents — untested, possibly free
 
-- **The thumb buttons**, if they exist in the raw reports.
-- **Device filtering.** Both `WH_MOUSE_LL` on Windows and `CGEventTap` on macOS
-  deliver input already merged across every pointing device, so today the
-  MX Master buzzes when you use the trackpad or a second mouse. Confirmed present
-  in BetterClick Haptics too, so it is the state of the art rather than a defect
-  of ours — which also makes it a genuine differentiator if solved.
+`reportID=2` carries the wheel as raw HID usage `GenericDesktop 0x38`, not the
+accelerated line delta `CGEventTap` reports. If that is a true detent count it
+would properly solve the scroll-pacing problem that `b0c0286` had to defer as
+unmeasurable — the reason pacing is a 50 ms cooldown rather than a real detent
+boundary.
 
-Open questions for the spike:
+Not measured: the capture session only pressed buttons. One 15-second capture
+with wheel rolls would settle it. Cheap, and it would retire a known compromise.
 
-- Does `IOHIDManager` work from inside LogiPluginService, given Options+ already
-  has the device open? Non-exclusive read access is normally allowed, but Options+
-  may hold it exclusively.
-- Does it need **Input Monitoring** (a *separate* TCC permission from
-  Accessibility)? If LPS does not already hold it, macOS gains a manual setup
-  step and the "one install, zero configuration" promise takes a real hit. That
-  is a product decision, not just a technical one — raise it rather than
-  absorbing it.
-- Device is **VID `0x046D`, PID `0xB042`**. Note an MX Master 3 may also be
-  paired; it has no haptic motor, so device-specific logic must target the 4.
+### 4. We are leaking event taps
 
-If IOHIDManager works cleanly it could replace `CGEventTap` entirely. If it needs
-a permission the user has to grant by hand, it probably should not — or should be
-opt-in. Do not assume; measure, then ask.
+`CGGetEventTapList` shows **six** taps owned by LogiPluginService — one enabled,
+five stale and disabled, spanning older builds (one carries the very first
+build's mask: `LMouseDown,RMouseDown,ScrollWheel,OtherMouseDown`, no drag). Each
+plugin reload creates a tap without destroying the last.
+
+`MacMouseInputSource.Stop()` disables the tap, stops the run loop and CFReleases
+both the tap and its run loop source — but never calls `CFMachPortInvalidate` on
+the tap, and never `CFRunLoopRemoveSource`. A CFRelease alone does not remove the
+port from the system tap list while another reference survives.
+
+Harmless today (they are disabled), but it accumulates across reloads and it
+means teardown is not doing what its comments claim.
 
 ---
 
@@ -175,12 +241,6 @@ opt-in. Do not assume; measure, then ask.
 - **No companion app, no local server, no browser configuration, no network
   access.** One install, working immediately, with sensible defaults. This is the
   entire reason the project exists — every competing plugin fails here.
-- **Do not rewrite the settings window in SwiftUI.** It was considered and
-  rejected. `HapticEvents.cs`, `Waveforms.cs` and `SettingsClient.cs` are
-  compiled into *both* platform windows, so the event catalogue physically cannot
-  drift. A transcribed Swift copy goes stale the first time an event is added,
-  and events have been added repeatedly over this project's life. Avalonia works
-  and is behaviourally identical to Windows.
 - **Do not touch `MouseInputSource.cs` or the Windows build.** Windows ships
   today, is on GitHub Releases, and is pending Marketplace submission. macOS work
   must not put it at risk.
@@ -191,6 +251,72 @@ opt-in. Do not assume; measure, then ask.
   `get_WaveformIndex` and nothing else. Do not add a strength setting; Options+
   has a global Haptic intensity control and duplicating it would give users two
   settings that fight.
+
+---
+
+## Decisions taken on the Mac, 2026-08-10
+
+Recorded because each reverses or resolves something this document previously
+left open. Nothing here has been implemented yet.
+
+### Do not touch the user's Options+ configuration
+
+Unbinding back/forward inside Options+ might stop the diversion and hand the
+buttons back. **Rejected.** Requiring a user to change their Options+ defaults
+to make our plugin work is a configuration step by another name, and the whole
+premise is one install with sensible defaults.
+
+Consequence: `mouse.back` and `mouse.forward` come out of the macOS catalogue.
+
+### The macOS settings window moves to SwiftUI — this reverses a constraint
+
+The old constraint said not to, because `HapticEvents.cs`, `Waveforms.cs` and
+`SettingsClient.cs` compile into *both* platform windows so the catalogue cannot
+drift. That reasoning was sound and the objection is real. It is outweighed by
+size, which this document already flagged as unresolved:
+
+| | unpacked | packed |
+|---|---|---|
+| Windows | 1.03 MB | 0.39 MB |
+| macOS, Avalonia | 25.1 MB | 10.4 MB |
+| macOS, SwiftUI (estimated) | ~1–2 MB | ~0.5 MB |
+
+`libSkiaSharp.dylib` is 14.8 MB of it. Windows is confirmed staying WinForms, so
+the Avalonia window is macOS-only anyway — it buys shared *source* with the
+Windows window, not a shared binary.
+
+**The drift objection is answered structurally rather than accepted.** The pipe
+protocol gains `CATALOG` and `WAVEFORMS` commands, so the settings UI renders
+whatever the plugin sends at runtime and holds no compiled-in copy of the event
+list. That is strictly stronger than the current arrangement, which relies on
+both sides being rebuilt together. The existing `GET` verb stays untouched so the
+Windows client is unaffected.
+
+**Cost, accepted knowingly:** `swiftc` exists only on macOS, so the macOS package
+can no longer be cross-built from Windows. Commit `8afd7a0` chose C# partly to
+preserve that loop. It is no longer the only loop, but macOS releases must now be
+cut on a Mac.
+
+---
+
+## Diagnostics
+
+`tools/macos-diagnostics/` holds the two throwaway probes that established facts
+6, 7 and 8. They are not part of the plugin and nothing links against them —
+kept because re-deriving these answers cost a session, and because they are the
+fastest way to check whether a macOS update has changed any of it.
+
+```bash
+swiftc -O tools/macos-diagnostics/hidprobe.swift -o /tmp/hidprobe
+/tmp/hidprobe taps      # every active event tap, in delivery order
+/tmp/hidprobe hid 30    # device open result, then raw input values
+
+swiftc -O tools/macos-diagnostics/descdump.swift -o /tmp/descdump
+/tmp/descdump 30        # full element dump, then RAW input reports
+```
+
+**Both need Input Monitoring for the HID half**, granted to whichever terminal
+or app runs them — which is itself the finding. `taps` needs nothing.
 
 ---
 
