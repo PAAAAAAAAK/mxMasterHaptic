@@ -20,8 +20,29 @@ namespace ThrumHapticsSettingsMac
     /// </remarks>
     internal static class Program
     {
+        /// <summary>
+        /// Measures where the launch time goes. Six lines, only on open.
+        /// </summary>
+        /// <remarks>
+        /// Started at entry, so it misses whatever the OS and the .NET host spend
+        /// BEFORE managed code runs - which on a framework-dependent app is a real
+        /// share of the total. The plugin logs the launch moment on its side, so
+        /// the difference between that and `entered` is exactly the pre-main cost.
+        ///
+        /// Written to stdout because the plugin captures it into the plugin log,
+        /// where anyone reading a startup complaint is already looking.
+        /// </remarks>
+        private static readonly System.Diagnostics.Stopwatch Clock =
+            System.Diagnostics.Stopwatch.StartNew();
+
+        // internal, not private: App is a sibling class rather than a nested one.
+        internal static void Mark(String stage) =>
+            Console.WriteLine($"[ThrumHaptics][startup] {stage} at {Clock.ElapsedMilliseconds}ms");
+
         private static void Main(String[] args)
         {
+            Mark("entered Main");
+
             // The pipe name is passed by the plugin, so both sides agree on it
             // without either hard-coding a value the other might not share.
             var pipeName = args.Length > 0 ? args[0] : "ThrumHaptics.Settings." + Environment.UserName;
@@ -57,10 +78,14 @@ namespace ThrumHapticsSettingsMac
                 return;
             }
 
+            Mark("pipe connected");
+
             try
             {
                 App.Client = client;
                 App.Values = client.GetAll();
+
+                Mark("settings read");
 
                 BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
             }
@@ -85,7 +110,7 @@ namespace ThrumHapticsSettingsMac
         // constructor, so the connection is handed over statically.
         public static SettingsClient Client;
 
-        public static System.Collections.Generic.Dictionary<String, (Boolean Enabled, String Waveform)> Values;
+        public static System.Collections.Generic.Dictionary<String, (Boolean Enabled, String Waveform, Int32 Density)> Values;
 
         public override void Initialize() =>
             // Fluent follows the system light/dark appearance, so the window
@@ -96,9 +121,22 @@ namespace ThrumHapticsSettingsMac
         {
             if (this.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
+                Program.Mark("Avalonia initialised");
+
+                // After Avalonia, before the window: AppKit has a shared
+                // NSApplication by now, and the Dock tile appears as the window
+                // opens rather than changing under the user a moment later.
+                MacDockIcon.Apply();
+
                 var window = new SettingsWindow(Client, Values);
 
-                window.Opened += (_, _) => window.Activate();
+                Program.Mark("window constructed");
+
+                window.Opened += (_, _) =>
+                {
+                    window.Activate();
+                    Program.Mark("window shown");
+                };
 
                 desktop.MainWindow = window;
             }

@@ -6,6 +6,8 @@ namespace ThrumHapticsSettings
     using System.IO.Pipes;
     using System.Text;
 
+    using Loupedeck.ThrumHapticsPlugin.Config;
+
     /// <summary>
     /// Talks to the plugin over its local named pipe.
     /// </summary>
@@ -61,9 +63,9 @@ namespace ThrumHapticsSettings
         }
 
         /// <summary>Current value of every event the plugin knows about.</summary>
-        public Dictionary<String, (Boolean Enabled, String Waveform)> GetAll()
+        public Dictionary<String, (Boolean Enabled, String Waveform, Int32 Density)> GetAll()
         {
-            var result = new Dictionary<String, (Boolean, String)>(StringComparer.OrdinalIgnoreCase);
+            var result = new Dictionary<String, (Boolean, String, Int32)>(StringComparer.OrdinalIgnoreCase);
 
             lock (this._gate)
             {
@@ -84,7 +86,11 @@ namespace ThrumHapticsSettings
 
                     if (parts.Length >= 3)
                     {
-                        result[parts[0]] = (Boolean.TryParse(parts[1], out var on) && on, parts[2]);
+                        var density = parts.Length >= 4 && Int32.TryParse(parts[3], out var level)
+                            ? level
+                            : HapticEvents.DefaultDensity;
+
+                        result[parts[0]] = (Boolean.TryParse(parts[1], out var on) && on, parts[2], density);
                     }
                 }
             }
@@ -92,11 +98,11 @@ namespace ThrumHapticsSettings
             return result;
         }
 
-        public void Set(String eventId, Boolean enabled, String waveform)
+        public void Set(String eventId, Boolean enabled, String waveform, Int32 density)
         {
             lock (this._gate)
             {
-                this._writer.WriteLine($"SET|{eventId}|{enabled}|{waveform}");
+                this._writer.WriteLine($"SET|{eventId}|{enabled}|{waveform}|{density}");
                 this._reader.ReadLine();
             }
         }

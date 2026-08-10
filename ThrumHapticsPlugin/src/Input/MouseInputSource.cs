@@ -39,11 +39,16 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
         /// before the previous one has finished, which stops feeling like discrete
         /// detents and turns into one continuous buzz.
         ///
-        /// 50ms caps it at ~20/second, which is roughly the fastest a ratchet still
-        /// reads as separate ticks. Tuned by feel - adjust if fast scrolling still
-        /// smears together.
+        /// Indexed by the user's density level, 1 (sparsest) to 5. Level 3 is the
+        /// default at 35ms, roughly 28 haptics a second.
+        ///
+        /// The bottom of the range is bounded by the MOTOR, not by taste: asked to
+        /// start a waveform before the last one has finished, it stops producing
+        /// discrete taps and becomes one continuous buzz. 20ms is as far down as
+        /// this goes for that reason, and level 5 is deliberately the edge rather
+        /// than a comfortable setting.
         /// </remarks>
-        private const Int64 ScrollCooldownMs = 50;
+        private static readonly Int64[] ScrollCooldownByDensity = { 70, 50, 35, 25, 20 };
 
         /// <summary>
         /// Rotation units that count as one synthesized detent on the thumb wheel.
@@ -66,11 +71,16 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
         /// threshold of 120, being below a single event's rotation, fired on every
         /// event and produced a continuous buzz.
         ///
-        /// 1080 = 3 scroll units per tick, spacing ticks far enough apart to feel
-        /// like discrete detents. This is THE tuning knob for thumb-wheel feel:
-        /// lower for more ticks, higher for fewer.
+        /// Indexed by density level. 360 equals exactly one event, so level 5 fires
+        /// on every one; 1440 fires on every fourth.
+        ///
+        /// The intermediate values are NOT wasted, which I got wrong once and want
+        /// to correct here: because the accumulator SUBTRACTS the threshold rather
+        /// than zeroing, leftover rotation carries forward and thresholds between
+        /// multiples of 360 produce fractional rates. 480 fires three times per four
+        /// events, 540 twice per three. The scale is continuous, not stepped.
         /// </remarks>
-        private const Int32 ThumbWheelDetentUnits = 1080;
+        private static readonly Int32[] ThumbWheelUnitsByDensity = { 1440, 1080, 720, 480, 360 };
 
         private readonly Dictionary<String, Int64> _lastFiredMs = new();
         private Int32 _thumbWheelAccumulator;
@@ -399,7 +409,7 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
 
             // Vertical wheel: paced by time. Its physical detents already provide
             // the rhythm in ratchet mode, and this reads well in free-spin too.
-            this.Fire(HapticEvents.ScrollVertical, ScrollCooldownMs);
+            this.Fire(HapticEvents.ScrollVertical, this.CooldownFor(HapticEvents.ScrollVertical));
         }
 
         /// <summary>
@@ -410,9 +420,12 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
             // Direction is irrelevant to the accumulator - rolling back and forth
             // should still tick. Reset on reversal would suppress ticks exactly
             // when the user is scrubbing, which is when feedback matters most.
+            var step = ThumbWheelUnitsByDensity[
+                HapticEvents.ClampDensity(this._settings.DensityFor(HapticEvents.ScrollHorizontal)) - 1];
+
             this._thumbWheelAccumulator += Math.Abs(rotation);
 
-            if (this._thumbWheelAccumulator < ThumbWheelDetentUnits)
+            if (this._thumbWheelAccumulator < step)
             {
                 return;
             }
@@ -420,12 +433,16 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
             // Subtract rather than zero, so leftover rotation carries into the next
             // detent. Zeroing would slowly lose distance and drift slower than the
             // real movement.
-            this._thumbWheelAccumulator -= ThumbWheelDetentUnits;
+            this._thumbWheelAccumulator -= step;
 
             // Still honour a time floor: a very fast flick could otherwise cross
             // several detents' worth between events and outrun the motor.
-            this.Fire(HapticEvents.ScrollHorizontal, ScrollCooldownMs);
+            this.Fire(HapticEvents.ScrollHorizontal, this.CooldownFor(HapticEvents.ScrollHorizontal));
         }
+
+        /// <summary>The time floor for an event at the user's chosen density.</summary>
+        private Int64 CooldownFor(String eventId) =>
+            ScrollCooldownByDensity[HapticEvents.ClampDensity(this._settings.DensityFor(eventId)) - 1];
 
         /// <summary>
         /// Plays an event's waveform, honouring its enable flag and rate limit.
