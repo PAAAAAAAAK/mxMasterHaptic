@@ -268,12 +268,11 @@ premise is one install with sensible defaults.
 
 Consequence: `mouse.back` and `mouse.forward` come out of the macOS catalogue.
 
-### The macOS settings window moves to SwiftUI — this reverses a constraint
+### The settings window stays Avalonia — the SwiftUI proposal was reversed
 
-The old constraint said not to, because `HapticEvents.cs`, `Waveforms.cs` and
-`SettingsClient.cs` compile into *both* platform windows so the catalogue cannot
-drift. That reasoning was sound and the objection is real. It is outweighed by
-size, which this document already flagged as unresolved:
+**Superseded 2026-08-10, after the Mac session.** SwiftUI was proposed here on
+size grounds and then rejected by the project owner. Recorded rather than deleted
+because the size figures are real and someone will reasonably raise it again.
 
 | | unpacked | packed |
 |---|---|---|
@@ -281,21 +280,26 @@ size, which this document already flagged as unresolved:
 | macOS, Avalonia | 25.1 MB | 10.4 MB |
 | macOS, SwiftUI (estimated) | ~1–2 MB | ~0.5 MB |
 
-`libSkiaSharp.dylib` is 14.8 MB of it. Windows is confirmed staying WinForms, so
-the Avalonia window is macOS-only anyway — it buys shared *source* with the
-Windows window, not a shared binary.
+`libSkiaSharp.dylib` is 14.8 MB of it. What settled it:
 
-**The drift objection is answered structurally rather than accepted.** The pipe
-protocol gains `CATALOG` and `WAVEFORMS` commands, so the settings UI renders
-whatever the plugin sends at runtime and holds no compiled-in copy of the event
-list. That is strictly stronger than the current arrangement, which relies on
-both sides being rebuilt together. The existing `GET` verb stays untouched so the
-Windows client is unaffected.
+- **No size limit exists.** Neither the SDK docs nor the Marketplace submission
+  guidance specifies one. For scale, LogiPluginService itself ships a **8.98 MB**
+  `libSkiaSharp.dll` — the same library. 10.4 MB packed is not out of family.
+- **Cross-building from Windows is worth more than the megabytes.** `swiftc` runs
+  only on macOS, so SwiftUI would mean every macOS change and every release must
+  be cut on the Mac. Avalonia keeps the whole project buildable from one machine,
+  which is the practical reality of how it is developed.
+- The Avalonia window is **already working** on device. SwiftUI would have been a
+  rewrite of working code sitting on the critical path to a macOS release.
 
-**Cost, accepted knowingly:** `swiftc` exists only on macOS, so the macOS package
-can no longer be cross-built from Windows. Commit `8afd7a0` chose C# partly to
-preserve that loop. It is no longer the only loop, but macOS releases must now be
-cut on a Mac.
+One piece of that proposal was genuinely good and is worth keeping in mind
+independently: `CATALOG` and `WAVEFORMS` pipe commands, so the settings UI renders
+what the plugin sends at **runtime** rather than holding a compiled-in copy.
+Strictly stronger than compile-time sharing, which relies on both sides being
+rebuilt together — and **framework-independent**, so it was never an argument for
+SwiftUI specifically. Not implemented: with Avalonia staying, both sides compile
+the same `HapticEvents.cs` and cannot drift, so it solves a problem we do not
+currently have.
 
 ---
 

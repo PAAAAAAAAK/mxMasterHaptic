@@ -20,8 +20,9 @@ namespace MxHapticsSettings
     ///
     /// Split into sections because the halves differ in kind: direct input (a
     /// click, a scroll notch) versus gestures that bracket a movement. Grids are
-    /// built from HapticEvents.All, which is compiled into both this application
-    /// and the plugin, so new events appear here with no UI work.
+    /// built from HapticEvents.ForCurrentPlatform, which is compiled into both this
+    /// application and the plugin, so new events appear here with no UI work - and
+    /// events the OS cannot deliver never appear as switches wired to nothing.
     /// </remarks>
     internal sealed class SettingsForm : Form
     {
@@ -307,7 +308,7 @@ namespace MxHapticsSettings
             String previousGroup = null;
             var shadeGroup = false;
 
-            foreach (var def in HapticEvents.All.Where(d => categories.Contains(d.Category)))
+            foreach (var def in HapticEvents.ForCurrentPlatform.Where(d => categories.Contains(d.Category)))
             {
                 if (def.GroupKey != previousGroup)
                 {
@@ -371,7 +372,7 @@ namespace MxHapticsSettings
                 .SelectMany(s => s.Categories)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            var missing = HapticEvents.All
+            var missing = HapticEvents.ForCurrentPlatform
                 .Select(e => e.Category)
                 .Distinct()
                 .Where(c => !shown.Contains(c))

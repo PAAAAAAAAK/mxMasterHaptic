@@ -143,7 +143,7 @@ namespace MxHapticsSettingsMac
             // Height is derived from the content rather than guessed, then capped,
             // so the list is fully visible on a large display without ever
             // exceeding a small one.
-            var rows = HapticEvents.All.Length;
+            var rows = HapticEvents.ForCurrentPlatform.Length;
             var wanted = 190 + (rows * 34) + (sections.Length * 34);
 
             this.Height = Math.Min(wanted, 780);
@@ -202,7 +202,7 @@ namespace MxHapticsSettingsMac
             String previousGroup = null;
             var shadeGroup = false;
 
-            foreach (var def in HapticEvents.All.Where(d => categories.Contains(d.Category)))
+            foreach (var def in HapticEvents.ForCurrentPlatform.Where(d => categories.Contains(d.Category)))
             {
                 if (def.GroupKey != previousGroup)
                 {
@@ -361,7 +361,7 @@ namespace MxHapticsSettingsMac
                 .SelectMany(s => s.Categories)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            return HapticEvents.All
+            return HapticEvents.ForCurrentPlatform
                 .Select(e => e.Category)
                 .Distinct()
                 .Where(c => !shown.Contains(c))

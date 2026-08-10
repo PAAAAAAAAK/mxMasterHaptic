@@ -45,9 +45,20 @@ namespace Loupedeck.MxHapticsPlugin.Config
         /// </remarks>
         public String GroupKey { get; }
 
+        /// <summary>
+        /// Events the operating system cannot deliver on macOS.
+        /// </summary>
+        /// <remarks>
+        /// Not a feature gate - these are physically undeliverable there, so a
+        /// settings row for one would be a switch wired to nothing. See
+        /// MacMouseInputSource and docs/macos-handoff.md fact 6 for the evidence.
+        /// </remarks>
+        public Boolean WindowsOnly { get; }
+
         public HapticEventDef(
             String id, String category, String displayName,
-            String defaultWaveform, Boolean defaultEnabled = true, String groupKey = null)
+            String defaultWaveform, Boolean defaultEnabled = true, String groupKey = null,
+            Boolean windowsOnly = false)
         {
             this.Id = id;
             this.Category = category;
@@ -55,6 +66,7 @@ namespace Loupedeck.MxHapticsPlugin.Config
             this.DefaultWaveform = defaultWaveform;
             this.DefaultEnabled = defaultEnabled;
             this.GroupKey = groupKey;
+            this.WindowsOnly = windowsOnly;
         }
 
         /// <summary>Label shown in the editor's event dropdown.</summary>
@@ -111,8 +123,19 @@ namespace Loupedeck.MxHapticsPlugin.Config
             // on the side buttons is further from the source and feels the same
             // waveform noticeably more weakly. These get the strongest click-grade
             // waveform to compensate, rather than simply being switched off.
-            new(MouseBack, "Clicks", "Back (thumb)", Waveforms.SharpCollision),
-            new(MouseForward, "Clicks", "Forward (thumb)", Waveforms.SharpCollision),
+            //
+            // WINDOWS ONLY, and not by choice. On Windows these arrive as
+            // XBUTTON1/XBUTTON2, ordinary mouse buttons the hook sees. On macOS
+            // they never enter the HID interface at all - measured at four
+            // observation points, down to raw HID reports, all absent - because
+            // Options+ converts them over a private channel. Nothing to hook, at
+            // any level, in any framework.
+            //
+            // They stay in the catalogue rather than being deleted so Windows keeps
+            // working and saved preferences are not orphaned; ForCurrentPlatform
+            // filters them out where they cannot fire.
+            new(MouseBack, "Clicks", "Back (thumb)", Waveforms.SharpCollision, windowsOnly: true),
+            new(MouseForward, "Clicks", "Forward (thumb)", Waveforms.SharpCollision, windowsOnly: true),
 
             // Scroll fires FAR more often than clicks, so it gets the lightest
             // waveform available - anything heavier becomes exhausting within
@@ -154,6 +177,21 @@ namespace Loupedeck.MxHapticsPlugin.Config
             // so it should be opted into rather than sprung on people.
             new(ScreenEdge, "Gestures", "Screen edge", Waveforms.SubtleCollision, defaultEnabled: false),
         };
+
+        /// <summary>
+        /// The events this operating system can actually deliver.
+        /// </summary>
+        /// <remarks>
+        /// Use this for anything user-facing. <see cref="All"/> is the full
+        /// catalogue and stays complete on every platform, so ids remain stable
+        /// and a preference saved on one machine is never orphaned by opening the
+        /// settings on another.
+        ///
+        /// This file is compiled into the plugin AND both settings applications,
+        /// so all three filter identically without anything crossing the pipe.
+        /// </remarks>
+        public static readonly HapticEventDef[] ForCurrentPlatform =
+            All.Where(e => !e.WindowsOnly || OperatingSystem.IsWindows()).ToArray();
 
         private static readonly Dictionary<String, HapticEventDef> ById =
             All.ToDictionary(e => e.Id, StringComparer.OrdinalIgnoreCase);

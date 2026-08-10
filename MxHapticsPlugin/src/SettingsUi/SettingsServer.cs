@@ -134,7 +134,11 @@ namespace Loupedeck.MxHapticsPlugin.SettingsUi
                         // catalogue, so the shape of the list never has to be sent.
                         this._settings.Reload();
 
-                        foreach (var def in HapticEvents.All)
+                        // ForCurrentPlatform, not All: an event the OS cannot
+                        // deliver here would arrive as a settings row wired to
+                        // nothing. The plugin and both settings applications
+                        // compile the same catalogue, so they filter identically.
+                        foreach (var def in HapticEvents.ForCurrentPlatform)
                         {
                             await writer.WriteLineAsync(
                                 $"{def.Id}|{this._settings.IsEnabled(def.Id)}|{this._settings.WaveformFor(def.Id)}")

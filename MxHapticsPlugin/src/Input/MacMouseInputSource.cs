@@ -111,6 +111,18 @@ namespace Loupedeck.MxHapticsPlugin.Input
         [DllImport(CoreFoundation)]
         private static extern void CFRelease(IntPtr cf);
 
+        // Releasing a CFMachPort is NOT the same as invalidating it. CFRelease
+        // drops our reference, but the port stays registered and the tap stays
+        // alive in the system - measured on device with CGGetEventTapList, which
+        // found six taps owned by LogiPluginService where there should have been
+        // one, five of them stale and the oldest still carrying the event mask of
+        // the very first build. Every plugin reload leaked one.
+        [DllImport(CoreFoundation)]
+        private static extern void CFMachPortInvalidate(IntPtr port);
+
+        [DllImport(CoreFoundation)]
+        private static extern void CFRunLoopSourceInvalidate(IntPtr source);
+
         /// <summary>Whether this process holds macOS Accessibility permission.</summary>
         /// <remarks>
         /// The grant attaches to the HOST process - LogiPluginService - not to us,
@@ -676,13 +688,19 @@ namespace Loupedeck.MxHapticsPlugin.Input
                 // Bounded: a plugin reload must never block on this.
                 this._thread.Join(TimeSpan.FromSeconds(2));
 
+                // INVALIDATE before releasing, and only once the run loop thread
+                // has exited. Releasing alone leaves the port registered and the
+                // tap alive, which leaked one tap per plugin reload - and the
+                // Plugin Service reloads this assembly on every rebuild.
                 if (this._runLoopSource != IntPtr.Zero)
                 {
+                    CFRunLoopSourceInvalidate(this._runLoopSource);
                     CFRelease(this._runLoopSource);
                 }
 
                 if (this._tap != IntPtr.Zero)
                 {
+                    CFMachPortInvalidate(this._tap);
                     CFRelease(this._tap);
                 }
             }
