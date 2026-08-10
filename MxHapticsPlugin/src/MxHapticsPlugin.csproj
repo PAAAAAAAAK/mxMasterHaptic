@@ -30,8 +30,22 @@
          observed loading win-arm64/native/uiohook.dll on this x64 machine, which
          silently produced a hook that never delivered events.
          Pinning the RID makes only the correct native binary ship. -->
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
     <SelfContained>false</SelfContained>
+
+    <!-- macOS builds are driven by passing a RID: `dotnet build -r osx-arm64`.
+         They differ enough from Windows to need their own switch: no settings
+         application (it is WinForms), no native binary of ours at all, and a
+         separate output tree so a cross-build never clobbers the Windows one. -->
+    <IsMacBuild>false</IsMacBuild>
+    <IsMacBuild Condition="$(RuntimeIdentifier.StartsWith('osx'))">true</IsMacBuild>
+
+    <!-- The .link file and reload command only make sense when building FOR the
+         machine you are building ON. Cross-building macOS from Windows must not
+         point the local Plugin Service at a macOS build. -->
+    <IsDevLoopBuild>false</IsDevLoopBuild>
+    <IsDevLoopBuild Condition="'$(OS)' == 'Windows_NT' and '$(IsMacBuild)' != 'true'">true</IsDevLoopBuild>
+    <IsDevLoopBuild Condition="'$(OS)' != 'Windows_NT' and '$(IsMacBuild)' == 'true'">true</IsDevLoopBuild>
 
     <!-- Keep the output at bin/ rather than bin/win-x64/. Setting a RID otherwise
          appends it to the output path, which would shift everything one level
@@ -44,7 +58,8 @@
     <PluginDir Condition="$(OS) == 'Windows_NT'">$(LocalAppData)\Logi\LogiPluginService\Plugins\</PluginDir>
     <PluginDir Condition="$(OS) != 'Windows_NT'">~/Library/Application\ Support/Logi/LogiPluginService/Plugins/</PluginDir>
 
-    <BaseOutputPath>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\bin\'))</BaseOutputPath>
+    <BaseOutputPath Condition="'$(IsMacBuild)' != 'true'">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\bin\'))</BaseOutputPath>
+    <BaseOutputPath Condition="'$(IsMacBuild)' == 'true'">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\bin-mac\'))</BaseOutputPath>
     <OutputPath>$(BaseOutputPath)$(Configuration)\bin\</OutputPath>
 
     <PluginShortName>MxHaptics</PluginShortName>
@@ -72,11 +87,14 @@
        so the package contains everything and the user installs one thing. It is
        a separate project purely so THIS assembly stays free of desktop framework
        references, which `logiplugintool verify` cannot resolve. -->
-  <Target Name="BuildSettingsApp" BeforeTargets="PostBuildEvent">
+  <Target Name="BuildSettingsApp" BeforeTargets="PostBuildEvent" Condition="'$(IsMacBuild)' != 'true'">
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\..\MxHapticsSettings\MxHapticsSettings.csproj&quot; -c $(Configuration) --nologo -v quiet" />
   </Target>
 
-  <Target Name="CopySettingsApp" AfterTargets="PostBuildEvent">
+  <!-- No settings application on macOS: MxHapticsSettings is WinForms and cannot
+       run there. Choosing its cross-platform replacement is deliberately deferred
+       until the macOS event tap is proven to work at all. -->
+  <Target Name="CopySettingsApp" AfterTargets="PostBuildEvent" Condition="'$(IsMacBuild)' != 'true'">
     <ItemGroup>
       <SettingsAppFiles Include="$(MSBuildThisFileDirectory)..\..\MxHapticsSettings\bin\$(Configuration)\**\*.*"
                         Exclude="$(MSBuildThisFileDirectory)..\..\MxHapticsSettings\bin\$(Configuration)\**\*.pdb" />
@@ -94,7 +112,19 @@
     <Message Text="✅ Package files copied to $(OutputPath)..\" Importance="High" />
   </Target>
 
-  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+  <!-- SharpHook copies its native binary for whatever RID is pinned. On macOS we
+       never load it - the Plugin Service's hardened runtime would refuse it - so
+       shipping it is dead weight and invites the reasonable question of why a
+       plugin carries a native library it never opens. -->
+  <Target Name="DropUnusedMacNative" AfterTargets="Build" Condition="'$(IsMacBuild)' == 'true'">
+    <ItemGroup>
+      <UnusedNative Include="$(OutputPath)libuiohook.dylib" />
+      <UnusedNative Include="$(OutputPath)runtimes\**\*.dylib" />
+    </ItemGroup>
+    <Delete Files="@(UnusedNative)" />
+  </Target>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="'$(IsDevLoopBuild)' == 'true'">
     <Exec Condition="$(OS) == 'Windows_NT'" Command="echo $(BaseOutputPath)$(Configuration)\ &gt; &quot;$(PluginDir)$(ProjectName).link&quot;" />
     <Exec Condition="$(OS) != 'Windows_NT'" Command="echo $(BaseOutputPath)$(Configuration)\ &gt; $(PluginDir)$(ProjectName).link" />
     <Message Text="🔨 Created plugin link at: $(PluginDir)$(ProjectName).link" Importance="High" />

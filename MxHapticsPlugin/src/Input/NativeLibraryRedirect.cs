@@ -50,6 +50,16 @@ namespace Loupedeck.MxHapticsPlugin.Input
 
             _configured = true;
 
+            // Windows only, for two independent reasons. The file-locking problem
+            // this solves does not exist on Unix, where an open file can still be
+            // unlinked - so uninstall was never at risk there. And macOS does not
+            // load SharpHook at all: the Plugin Service's hardened runtime blocks
+            // any dylib we could ship. See MacMouseInputSource.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             try
             {
                 var source = Path.Combine(pluginBinDirectory, LibraryName + ".dll");

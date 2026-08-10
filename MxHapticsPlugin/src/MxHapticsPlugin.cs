@@ -127,10 +127,19 @@ namespace Loupedeck.MxHapticsPlugin
             // MUST happen before any hook is created. SharpHook's native library
             // cannot be unloaded once mapped into the Plugin Service process, so
             // loading it from the plugin folder would lock a file there and make
-            // uninstalling the plugin fail.
+            // uninstalling the plugin fail. No-ops off Windows, where SharpHook is
+            // not used at all - see MacMouseInputSource for why.
             NativeLibraryRedirect.Configure(System.IO.Path.GetDirectoryName(this.AssemblyFilePath));
 
-            this._inputSources.Add(new MouseInputSource(this._haptics, this.Settings));
+            // The two implementations are NOT interchangeable and the difference is
+            // not a portability convenience. SharpHook cannot be loaded into the
+            // Plugin Service on macOS at all: that process runs with the hardened
+            // runtime, so library validation refuses any dylib not signed by Apple
+            // or by Logitech. macOS therefore taps CoreGraphics directly and ships
+            // no native binary of ours. MacMouseInputSource documents this in full.
+            this._inputSources.Add(OperatingSystem.IsMacOS()
+                ? new MacMouseInputSource(this._haptics, this.Settings)
+                : new MouseInputSource(this._haptics, this.Settings));
 
             foreach (var source in this._inputSources)
             {
