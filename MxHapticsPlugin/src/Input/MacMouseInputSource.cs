@@ -9,7 +9,7 @@ namespace Loupedeck.MxHapticsPlugin.Input
     using Loupedeck.MxHapticsPlugin.Haptics;
 
     /// <summary>
-    /// Fires haptics on mouse buttons and scroll on macOS, in every application.
+    /// Fires haptics on mouse buttons, scroll and drag on macOS, in every application.
     /// </summary>
     /// <remarks>
     /// WHY THIS EXISTS INSTEAD OF SHARPHOOK. SharpHook works fine on macOS in an
@@ -35,6 +35,11 @@ namespace Loupedeck.MxHapticsPlugin.Input
     /// CoreFoundation are Apple-signed, so P/Invoke into them is explicitly
     /// permitted, and CGEventTap gives us exactly the system-wide mouse events
     /// libuiohook would have provided.
+    ///
+    /// MEASURED ON DEVICE (macOS 26.6.1, Apple Silicon): the tap is created and
+    /// enabled inside the Plugin Service, events arrive on a run loop we own on a
+    /// background thread, and no kCGEventTapDisabledByTimeout was observed across
+    /// several minutes of continuous clicking and scrolling.
     /// </remarks>
     internal sealed class MacMouseInputSource : IInputSource
     {
@@ -127,15 +132,23 @@ namespace Loupedeck.MxHapticsPlugin.Input
         private const UInt32 EventTapOptionListenOnly = 1;
 
         private const UInt32 EventLeftMouseDown = 1;
+        private const UInt32 EventLeftMouseUp = 2;
         private const UInt32 EventRightMouseDown = 3;
+        private const UInt32 EventRightMouseUp = 4;
+        private const UInt32 EventLeftMouseDragged = 6;
+        private const UInt32 EventRightMouseDragged = 7;
         private const UInt32 EventScrollWheel = 22;
         private const UInt32 EventOtherMouseDown = 25;
+        private const UInt32 EventOtherMouseUp = 26;
+        private const UInt32 EventOtherMouseDragged = 27;
 
         // Delivered in place of a real event when the OS switches the tap off.
         private const UInt32 EventTapDisabledByTimeout = 0xFFFFFFFE;
         private const UInt32 EventTapDisabledByUserInput = 0xFFFFFFFF;
 
         private const UInt32 FieldMouseEventButtonNumber = 3;
+        private const UInt32 FieldMouseEventDeltaX = 4;
+        private const UInt32 FieldMouseEventDeltaY = 5;
         private const UInt32 FieldScrollWheelEventDeltaAxis1 = 11; // vertical
         private const UInt32 FieldScrollWheelEventDeltaAxis2 = 12; // horizontal
 
@@ -151,22 +164,101 @@ namespace Loupedeck.MxHapticsPlugin.Input
             return mask;
         }
 
-        // --- Pacing -----------------------------------------------------------
+        // --- Buttons ----------------------------------------------------------
 
-        /// <summary>Minimum gap between two scroll haptics, per direction.</summary>
+        /// <summary>
+        /// The buttons we recognise, independent of how macOS delivers them.
+        /// </summary>
         /// <remarks>
-        /// Same reasoning and same value as the Windows source: a floor of 50ms
-        /// caps scroll at ~20 taps/second, which is roughly the fastest a ratchet
-        /// still reads as separate ticks rather than one continuous buzz.
-        ///
-        /// NOTE: this duplicates ScrollCooldownMs in MouseInputSource. Left
-        /// duplicated on purpose until the tap is proven to work - extracting
-        /// shared pacing logic before we know the macOS side is viable would be
-        /// refactoring around a design that might not survive.
+        /// Left and right arrive as their own event types; everything else comes
+        /// through the OtherMouse* types carrying a button number. Keeping a
+        /// logical id lets drag tracking work the same way for all three
+        /// drag-capable buttons without caring which route the event took.
         /// </remarks>
+        private enum Button
+        {
+            None,
+            Left,
+            Right,
+            Middle,
+            Back,
+            Forward,
+        }
+
+        /// <summary>Maps macOS "other" button numbers onto logical buttons.</summary>
+        /// <remarks>
+        /// 2 is the wheel button; 3 and 4 are the thumb buttons. Anything else is
+        /// a button this mouse does not have and is ignored rather than guessed at
+        /// - but see OnEvent, which logs every unmapped number so a wrong
+        /// assumption here shows up in the log instead of failing silently.
+        /// </remarks>
+        private static Button ButtonForOtherNumber(Int64 number) => number switch
+        {
+            2 => Button.Middle,
+            3 => Button.Back,
+            4 => Button.Forward,
+            _ => Button.None,
+        };
+
+        private static String EventIdFor(Button button) => button switch
+        {
+            Button.Left => HapticEvents.MouseLeft,
+            Button.Right => HapticEvents.MouseRight,
+            Button.Middle => HapticEvents.MouseMiddle,
+            Button.Back => HapticEvents.MouseBack,
+            Button.Forward => HapticEvents.MouseForward,
+            _ => null,
+        };
+
+        /// <summary>Which buttons can start a drag, and the events they raise.</summary>
+        /// <remarks>
+        /// Back and forward are deliberately absent, exactly as on Windows:
+        /// holding a thumb button and moving is not a drag by any normal meaning
+        /// of the word.
+        /// </remarks>
+        private static readonly Dictionary<Button, (String Start, String End)> DragEvents = new()
+        {
+            [Button.Left] = (HapticEvents.DragLeftStart, HapticEvents.DragLeftEnd),
+            [Button.Right] = (HapticEvents.DragRightStart, HapticEvents.DragRightEnd),
+            [Button.Middle] = (HapticEvents.DragMiddleStart, HapticEvents.DragMiddleEnd),
+        };
+
+        // --- Pacing and thresholds --------------------------------------------
+        //
+        // These mirror MouseInputSource exactly, and the reasoning behind each is
+        // documented there rather than repeated. They are duplicated on purpose
+        // for now: extracting shared pacing logic is worth doing, but not before
+        // the macOS side has settled enough to know what genuinely IS shared.
+
         private const Int64 ScrollCooldownMs = 50;
+        private const Int32 DragThresholdPx = 5;
+        private const Int64 DragMinSeparationMs = 150;
 
         private readonly Dictionary<String, Int64> _lastFiredMs = new();
+
+        /// <summary>Per-button drag tracking. Buttons can be held simultaneously.</summary>
+        /// <remarks>
+        /// Displacement is accumulated from the event stream rather than read as an
+        /// absolute cursor position. CGEventGetLocation returns a CGPoint by value,
+        /// and summing the signed per-event deltas gives the same answer - net
+        /// distance from where the button went down - without marshalling a struct
+        /// back across the boundary.
+        /// </remarks>
+        private sealed class DragState
+        {
+            public Boolean ButtonDown;
+            public Boolean Dragging;
+            public Int64 DisplacementX;
+            public Int64 DisplacementY;
+            public Int64 StartMs;
+        }
+
+        private readonly Dictionary<Button, DragState> _dragStates = new()
+        {
+            [Button.Left] = new DragState(),
+            [Button.Right] = new DragState(),
+            [Button.Middle] = new DragState(),
+        };
 
         public void Start()
         {
@@ -197,8 +289,10 @@ namespace Loupedeck.MxHapticsPlugin.Input
                 this._callback = this.OnEvent;
 
                 var mask = MaskOf(
-                    EventLeftMouseDown, EventRightMouseDown,
-                    EventOtherMouseDown, EventScrollWheel);
+                    EventLeftMouseDown, EventLeftMouseUp, EventLeftMouseDragged,
+                    EventRightMouseDown, EventRightMouseUp, EventRightMouseDragged,
+                    EventOtherMouseDown, EventOtherMouseUp, EventOtherMouseDragged,
+                    EventScrollWheel);
 
                 this._tap = CGEventTapCreate(
                     SessionEventTap, HeadInsertEventTap, EventTapOptionListenOnly,
@@ -276,18 +370,33 @@ namespace Loupedeck.MxHapticsPlugin.Input
                 switch (type)
                 {
                     case EventLeftMouseDown:
-                        this.Fire(HapticEvents.MouseLeft, cooldownMs: 0);
+                        this.OnButtonDown(Button.Left);
                         break;
 
                     case EventRightMouseDown:
-                        this.Fire(HapticEvents.MouseRight, cooldownMs: 0);
+                        this.OnButtonDown(Button.Right);
+                        break;
+
+                    case EventLeftMouseUp:
+                        this.OnButtonUp(Button.Left);
+                        break;
+
+                    case EventRightMouseUp:
+                        this.OnButtonUp(Button.Right);
+                        break;
+
+                    case EventLeftMouseDragged:
+                        this.OnDragged(Button.Left, @event);
+                        break;
+
+                    case EventRightMouseDragged:
+                        this.OnDragged(Button.Right, @event);
                         break;
 
                     case EventOtherMouseDown:
-                        this.Fire(
-                            EventIdForOtherButton(
-                                CGEventGetIntegerValueField(@event, FieldMouseEventButtonNumber)),
-                            cooldownMs: 0);
+                    case EventOtherMouseUp:
+                    case EventOtherMouseDragged:
+                        this.OnOtherMouse(type, @event);
                         break;
 
                     case EventScrollWheel:
@@ -308,47 +417,138 @@ namespace Loupedeck.MxHapticsPlugin.Input
         }
 
         /// <summary>
-        /// Maps macOS "other" button numbers onto our event ids.
+        /// Handles the middle and thumb buttons, which all arrive as OtherMouse*.
         /// </summary>
         /// <remarks>
-        /// Left and right arrive as their own event types; everything else comes
-        /// through OtherMouseDown carrying a button number. 2 is the wheel button,
-        /// 3 and 4 are the thumb buttons. Anything higher is a button this mouse
-        /// does not have, and is ignored rather than guessed at.
+        /// The raw button number is logged for EVERY such event, including numbers
+        /// we do not map. An earlier build mapped them silently, so a button that
+        /// produced no haptic was indistinguishable from a button whose events
+        /// never arrived at all - and those two have completely different fixes.
         /// </remarks>
-        private static String EventIdForOtherButton(Int64 buttonNumber) => buttonNumber switch
+        private void OnOtherMouse(UInt32 type, IntPtr @event)
         {
-            2 => HapticEvents.MouseMiddle,
-            3 => HapticEvents.MouseBack,
-            4 => HapticEvents.MouseForward,
-            _ => null,
-        };
+            var number = CGEventGetIntegerValueField(@event, FieldMouseEventButtonNumber);
+            var button = ButtonForOtherNumber(number);
+
+            PluginLog.Info($"[MxHaptics] other-mouse type={type} buttonNumber={number} -> {button}");
+
+            if (button == Button.None)
+            {
+                return;
+            }
+
+            switch (type)
+            {
+                case EventOtherMouseDown:
+                    this.OnButtonDown(button);
+                    break;
+
+                case EventOtherMouseUp:
+                    this.OnButtonUp(button);
+                    break;
+
+                case EventOtherMouseDragged:
+                    this.OnDragged(button, @event);
+                    break;
+            }
+        }
+
+        private void OnButtonDown(Button button)
+        {
+            if (this._dragStates.TryGetValue(button, out var state))
+            {
+                state.ButtonDown = true;
+                state.Dragging = false;
+                state.DisplacementX = 0;
+                state.DisplacementY = 0;
+            }
+
+            // Fire on PRESS rather than release, so the haptic coincides with the
+            // physical switch actuating instead of trailing it.
+            this.Fire(EventIdFor(button), cooldownMs: 0);
+        }
+
+        private void OnButtonUp(Button button)
+        {
+            if (!this._dragStates.TryGetValue(button, out var state))
+            {
+                return; // Not a drag-capable button (back / forward).
+            }
+
+            state.ButtonDown = false;
+
+            if (!state.Dragging)
+            {
+                return; // Plain click - already handled on press.
+            }
+
+            state.Dragging = false;
+
+            // Too quick for the pair to read as two distinct taps: keep the start,
+            // drop the end, rather than deliver a smear.
+            if ((Environment.TickCount64 - state.StartMs) < DragMinSeparationMs)
+            {
+                return;
+            }
+
+            this.Fire(DragEvents[button].End, cooldownMs: 0);
+        }
+
+        private void OnDragged(Button button, IntPtr @event)
+        {
+            if (!this._dragStates.TryGetValue(button, out var state) || !state.ButtonDown || state.Dragging)
+            {
+                return;
+            }
+
+            // Signed accumulation, so this measures net displacement from the press
+            // point rather than total path length. Summing absolute values would let
+            // a slow wiggle in place cross the threshold and report a drag that
+            // never went anywhere.
+            state.DisplacementX += CGEventGetIntegerValueField(@event, FieldMouseEventDeltaX);
+            state.DisplacementY += CGEventGetIntegerValueField(@event, FieldMouseEventDeltaY);
+
+            if (Math.Abs(state.DisplacementX) < DragThresholdPx
+                && Math.Abs(state.DisplacementY) < DragThresholdPx)
+            {
+                return;
+            }
+
+            state.Dragging = true;
+            state.StartMs = Environment.TickCount64;
+
+            this.Fire(DragEvents[button].Start, cooldownMs: 0);
+        }
 
         private void OnScroll(IntPtr @event)
         {
             var vertical = CGEventGetIntegerValueField(@event, FieldScrollWheelEventDeltaAxis1);
             var horizontal = CGEventGetIntegerValueField(@event, FieldScrollWheelEventDeltaAxis2);
 
-            // Logged so the thumb-wheel pacing can be tuned against what the device
-            // actually reports on macOS rather than assumed. Windows reports rotation
-            // in units of 120 (and 360 per thumb-wheel event); macOS reports LINES,
-            // typically +/-1 per detent, so the Windows detent threshold of 1080 is
-            // meaningless here and the real value has to be measured.
+            // MOST scroll events carry zero on both line axes. The MX Master's wheel
+            // reports at high resolution, so macOS emits a stream of sub-line events
+            // and only ticks the line counter once a full line accumulates. Those are
+            // not scrolls we can act on, and an earlier build logged hundreds of them
+            // per flick for nothing.
+            if (vertical == 0 && horizontal == 0)
+            {
+                return;
+            }
+
+            // NOTE the line delta is ACCELERATED by macOS: the same physical detent
+            // reports 1 line rolled slowly and 16 rolled fast, so it is a distance,
+            // never a detent count. That rules out the Windows approach of counting
+            // rotation units towards a fixed threshold - 1080 there means nothing
+            // here. Pacing is by time until measurement says otherwise.
             PluginLog.Verbose($"[MxHaptics] scroll axis1={vertical} axis2={horizontal}");
 
             if (horizontal != 0)
             {
-                // Thumb wheel. Paced by time for now; the Windows source paces by
-                // DISTANCE to synthesize the detents the hardware lacks, and that
-                // wants porting once the measurements above tell us the scale.
                 this.Fire(HapticEvents.ScrollHorizontal, ScrollCooldownMs);
                 return;
             }
 
-            if (vertical != 0)
-            {
-                this.Fire(HapticEvents.ScrollVertical, ScrollCooldownMs);
-            }
+            this.Fire(HapticEvents.ScrollVertical, ScrollCooldownMs);
         }
 
         /// <summary>Plays an event's waveform, honouring its enable flag and rate limit.</summary>
