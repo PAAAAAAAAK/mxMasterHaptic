@@ -268,7 +268,7 @@ a collectible load context. Use the SDK's `AssemblyFilePath` instead.
 
 MIT — see [LICENSE](LICENSE). End user terms: [EULA](EULA.md).
 
-Free, and staying free. Nothing is gated behind sponsorship — but if this saved
-you an afternoon, a coffee is very welcome:
+Free, and staying free. Nothing is gated behind sponsorship — but if you like the
+plugin and want to support me, a coffee is very welcome:
 [GitHub Sponsors](https://github.com/sponsors/PAAAAAAAAK) ·
 [Buy Me a Coffee](https://buymeacoffee.com/paaaaaaaak).
