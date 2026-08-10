@@ -149,8 +149,19 @@ namespace Loupedeck.MxHapticsPlugin.Input
         private const UInt32 FieldMouseEventButtonNumber = 3;
         private const UInt32 FieldMouseEventDeltaX = 4;
         private const UInt32 FieldMouseEventDeltaY = 5;
-        private const UInt32 FieldScrollWheelEventDeltaAxis1 = 11; // vertical
-        private const UInt32 FieldScrollWheelEventDeltaAxis2 = 12; // horizontal
+        private const UInt32 FieldScrollWheelEventDeltaAxis1 = 11; // vertical, LINES, accelerated
+        private const UInt32 FieldScrollWheelEventDeltaAxis2 = 12; // horizontal, LINES, accelerated
+
+        // Diagnostics for detent reconstruction. Windows gives one event per
+        // physical detent; macOS reports the same wheel at high resolution, so
+        // several events arrive per detent and something here has to stand in for
+        // the detent boundary. Logged until we know which field actually tracks
+        // physical movement rather than post-acceleration distance.
+        private const UInt32 FieldScrollWheelEventIsContinuous = 88;
+        private const UInt32 FieldScrollWheelEventPointDeltaAxis1 = 96;
+        private const UInt32 FieldScrollWheelEventPointDeltaAxis2 = 97;
+        private const UInt32 FieldScrollWheelEventScrollPhase = 99;
+        private const UInt32 FieldScrollWheelEventMomentumPhase = 123;
 
         private static UInt64 MaskOf(params UInt32[] types)
         {
@@ -535,12 +546,33 @@ namespace Loupedeck.MxHapticsPlugin.Input
                 return;
             }
 
+            // MOMENTUM events are inertial scrolling the OS continues AFTER the
+            // wheel has stopped moving. A haptic there would be feedback for input
+            // the user is no longer providing, which is worse than no haptic at all.
+            var momentumPhase = CGEventGetIntegerValueField(@event, FieldScrollWheelEventMomentumPhase);
+
+            if (momentumPhase != 0)
+            {
+                return;
+            }
+
             // NOTE the line delta is ACCELERATED by macOS: the same physical detent
             // reports 1 line rolled slowly and 16 rolled fast, so it is a distance,
             // never a detent count. That rules out the Windows approach of counting
             // rotation units towards a fixed threshold - 1080 there means nothing
-            // here. Pacing is by time until measurement says otherwise.
-            PluginLog.Verbose($"[MxHaptics] scroll axis1={vertical} axis2={horizontal}");
+            // here.
+            //
+            // Worse, the wheel reports at HIGH RESOLUTION, so several events arrive
+            // per physical detent - which makes the ScrollCooldownMs floor the main
+            // thing pacing haptics rather than a rare safety net, and it fires
+            // faster than the detents you can feel under your finger. Everything
+            // below is logged to find a field that tracks physical movement.
+            PluginLog.Verbose(
+                $"[MxHaptics] scroll axis1={vertical} axis2={horizontal}"
+                + $" pt1={CGEventGetIntegerValueField(@event, FieldScrollWheelEventPointDeltaAxis1)}"
+                + $" pt2={CGEventGetIntegerValueField(@event, FieldScrollWheelEventPointDeltaAxis2)}"
+                + $" continuous={CGEventGetIntegerValueField(@event, FieldScrollWheelEventIsContinuous)}"
+                + $" phase={CGEventGetIntegerValueField(@event, FieldScrollWheelEventScrollPhase)}");
 
             if (horizontal != 0)
             {
