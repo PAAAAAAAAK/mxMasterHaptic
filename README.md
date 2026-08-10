@@ -24,8 +24,10 @@ Options+**. Needs an MX Master 4, Logi Options+, and Windows x64 or Apple
 Silicon macOS.
 
 <p align="center">
-  <img src="docs/settings-window.png" alt="Thrum Haptics settings window" width="520">
+  <img src="docs/settings-window.png" alt="Thrum Haptics settings window on Windows" width="420">
+  <img src="docs/settings-window-macos.png" alt="Thrum Haptics settings window on macOS" width="420">
 </p>
+<p align="center"><em>Windows and macOS — the same settings, native on each.</em></p>
 
 ## What it does
 
