@@ -91,9 +91,24 @@
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\..\MxHapticsSettings\MxHapticsSettings.csproj&quot; -c $(Configuration) --nologo -v quiet" />
   </Target>
 
-  <!-- No settings application on macOS: MxHapticsSettings is WinForms and cannot
-       run there. Choosing its cross-platform replacement is deliberately deferred
-       until the macOS event tap is proven to work at all. -->
+  <!-- macOS gets its own settings application. Windows keeps the WinForms one,
+       which works and ships - there is nothing for Windows to gain from a
+       rewrite, so the two are deliberately separate rather than unified for its
+       own sake. Both compile in the same HapticEvents.cs and Waveforms.cs, so the
+       event catalogue cannot drift between them. -->
+  <Target Name="BuildMacSettingsApp" BeforeTargets="PostBuildEvent" Condition="'$(IsMacBuild)' == 'true'">
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\..\MxHapticsSettingsMac\MxHapticsSettingsMac.csproj&quot; -c $(Configuration) --nologo -v quiet" />
+  </Target>
+
+  <Target Name="CopyMacSettingsApp" AfterTargets="PostBuildEvent" Condition="'$(IsMacBuild)' == 'true'">
+    <ItemGroup>
+      <MacSettingsAppFiles Include="$(MSBuildThisFileDirectory)..\..\MxHapticsSettingsMac\bin\$(Configuration)\**\*.*"
+                           Exclude="$(MSBuildThisFileDirectory)..\..\MxHapticsSettingsMac\bin\$(Configuration)\**\*.pdb" />
+    </ItemGroup>
+    <Copy SourceFiles="@(MacSettingsAppFiles)" DestinationFolder="$(OutputPath)%(RecursiveDir)" />
+    <Message Text="🍎 macOS settings application copied into plugin output" Importance="High" />
+  </Target>
+
   <Target Name="CopySettingsApp" AfterTargets="PostBuildEvent" Condition="'$(IsMacBuild)' != 'true'">
     <ItemGroup>
       <SettingsAppFiles Include="$(MSBuildThisFileDirectory)..\..\MxHapticsSettings\bin\$(Configuration)\**\*.*"

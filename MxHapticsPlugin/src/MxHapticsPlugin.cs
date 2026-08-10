@@ -61,7 +61,12 @@ namespace Loupedeck.MxHapticsPlugin
                     return;
                 }
 
-                var exePath = System.IO.Path.Combine(pluginDir, "MxHapticsSettings.exe");
+                // Separate executables per platform. The Windows one is WinForms and
+                // cannot run on macOS; the macOS one is built for osx-arm64 and has
+                // no .exe suffix.
+                var exePath = System.IO.Path.Combine(
+                    pluginDir,
+                    OperatingSystem.IsMacOS() ? "MxHapticsSettingsMac" : "MxHapticsSettings.exe");
 
                 if (!System.IO.File.Exists(exePath))
                 {
@@ -69,19 +74,103 @@ namespace Loupedeck.MxHapticsPlugin
                     return;
                 }
 
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                EnsureExecutable(exePath);
+
+                var startInfo = new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = exePath,
                     Arguments = SettingsServer.PipeName,
                     UseShellExecute = false,
                     WorkingDirectory = pluginDir,
-                });
+                };
 
-                PluginLog.Info("[MxHaptics] Settings application launched.");
+                // PROBE INSTRUMENTATION, macOS only - remove once the launch path is
+                // proven. Two different failures are possible here and they need
+                // telling apart: a lost execute bit throws on Start, while Gatekeeper
+                // refusing an ad-hoc signed binary lets it start and then kills it.
+                // Read asynchronously so a UI process that never exits cannot block us.
+                if (OperatingSystem.IsMacOS())
+                {
+                    startInfo.RedirectStandardOutput = true;
+                    startInfo.RedirectStandardError = true;
+                }
+
+                var process = System.Diagnostics.Process.Start(startInfo);
+
+                if (OperatingSystem.IsMacOS() && process != null)
+                {
+                    process.OutputDataReceived += (_, e) =>
+                    {
+                        if (!String.IsNullOrWhiteSpace(e.Data))
+                        {
+                            PluginLog.Info($"[MxHaptics] settings-app stdout: {e.Data}");
+                        }
+                    };
+
+                    process.ErrorDataReceived += (_, e) =>
+                    {
+                        if (!String.IsNullOrWhiteSpace(e.Data))
+                        {
+                            PluginLog.Error($"[MxHaptics] settings-app stderr: {e.Data}");
+                        }
+                    };
+
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+                }
+
+                PluginLog.Info($"[MxHaptics] Settings application launched (pid {process?.Id}).");
             }
             catch (Exception ex)
             {
                 PluginLog.Error($"[MxHaptics] Failed to launch settings application: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Restores the execute bit on the settings application, on Unix.
+        /// </summary>
+        /// <remarks>
+        /// A .lplug4 is a zip, and ours is written on Windows - which has no Unix
+        /// mode to store. If the bit does not survive the round trip, the extracted
+        /// file cannot be exec'd at all and the settings window simply never opens,
+        /// with nothing but a permissions error to show for it.
+        ///
+        /// Cheap to make unconditional rather than conditional on having detected
+        /// the problem: reading and setting a file mode costs nothing next to
+        /// launching a process, and it keeps working if the packaging tool's
+        /// behaviour ever changes underneath us.
+        /// </remarks>
+        private static void EnsureExecutable(String path)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return; // No Unix mode to set, and the APIs throw here.
+            }
+
+            try
+            {
+                var mode = System.IO.File.GetUnixFileMode(path);
+                const System.IO.UnixFileMode Execute =
+                    System.IO.UnixFileMode.UserExecute
+                    | System.IO.UnixFileMode.GroupExecute
+                    | System.IO.UnixFileMode.OtherExecute;
+
+                if ((mode & Execute) == Execute)
+                {
+                    PluginLog.Info($"[MxHaptics] Settings application already executable (mode {mode}).");
+                    return;
+                }
+
+                System.IO.File.SetUnixFileMode(path, mode | Execute);
+
+                PluginLog.Info(
+                    $"[MxHaptics] Settings application was NOT executable (mode {mode}); "
+                    + $"execute bit added -> {System.IO.File.GetUnixFileMode(path)}.");
+            }
+            catch (Exception ex)
+            {
+                PluginLog.Error($"[MxHaptics] Could not set the execute bit on '{path}': {ex.Message}");
             }
         }
 
