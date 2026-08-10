@@ -19,7 +19,7 @@ description: Universal haptic feedback - clicks, scroll and gestures, in every a
 pluginFileName: ThrumHapticsPlugin.dll
 
 # Plugin version.
-version: 1.2.5
+version: 1.2.0
 
 # Author of the plugin. The author can be a company or an individual developer.
 author: PAAAAAAAAK
@@ -48,7 +48,7 @@ pluginFolderWin: bin
 # NESTED under bin, not a sibling of it. A top-level 'mac' folder installed fine
 # on Windows and failed on macOS; the only documented example writes this path
 # nested, so the service appears not to resolve an arbitrary top-level folder.
-pluginFolderMac: bin/mac
+pluginFolderMac: bin
 
 # List of devices the plugin is optimized for.
 supportedDevices:

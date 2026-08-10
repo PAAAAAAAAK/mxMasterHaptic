@@ -1,22 +1,33 @@
 <#
 .SYNOPSIS
-    Builds and packs a dual-platform Thrum Haptics release.
+    Builds and packs one Thrum Haptics release package per platform.
 
 .DESCRIPTION
-    One .lplug4 carries both platforms. LoupedeckPackage.yaml names a folder per
-    OS - pluginFolderWin: bin, pluginFolderMac: mac - and the Plugin Service loads
-    only the one matching the machine it is running on.
+    TWO packages, one version. Each is single-platform: the manifest keeps only
+    the pluginFolder key for its own OS, and its files sit in bin. A Windows user
+    downloads 0.4MB instead of 10.7MB, and each file names the platform it is for.
 
-    The two folders hold DIFFERENT files, which is why they cannot be merged the
-    way Logitech's own plugins merge them. Windows ships uiohook.dll and a WinForms
-    executable; macOS ships Avalonia and its Skia renderer and no native binary of
-    ours at all. Neither belongs on the other platform.
+    Each package is built from a COMPLETELY CLEAN TREE, and that is not tidiness -
+    it is the fix for a real defect. An earlier version of this script built
+    Windows and then macOS in sequence. Because AppendRuntimeIdentifierToOutputPath
+    is false (needed so pluginFolderWin can stay 'bin'), the RID is stripped from
+    the INTERMEDIATE paths as well, so both builds shared src/obj/Release and the
+    second inherited state from the first.
 
-    Both output trees are deleted before building. This is not superstition: a
-    build only ever ADDS to its output directory, so a renamed or removed project
-    leaves its old assemblies behind and `pack` ships them. That is invisible in
-    the build log and `verify` passes happily, because the package is structurally
-    fine - it just contains files it should not. It has happened once already.
+    The macOS package that came out was subtly poisoned: identical file list,
+    identical deps.json, an assembly of exactly the same size exporting the same
+    APIs - and Logi Options+ refused to install it, every time, with a generic
+    "Install plugin method failed". Eight consecutive packages failed that way
+    while five built standalone installed first time. Nothing in the package
+    content revealed it; only build provenance correlated.
+
+    So: clean, build one platform, pack, clean again, build the other. Never two
+    RIDs through one intermediate directory.
+
+    Cleaning also protects the older trap this script was written for. A build only
+    ADDS to its output directory, so a renamed or removed project leaves its old
+    assemblies behind for pack to ship - invisible in the log, and verify passes
+    because the package is structurally fine.
 
 .EXAMPLE
     ./tools/pack-release.ps1 -Version 1.2.0
@@ -29,59 +40,82 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
-$plugin = Join-Path $root 'ThrumHapticsPlugin\src\ThrumHapticsPlugin.csproj'
-$winOut = Join-Path $root "ThrumHapticsPlugin\bin\$Configuration"
-$macOut = Join-Path $root "ThrumHapticsPlugin\bin-mac\$Configuration"
-$staging = Join-Path $root "ThrumHapticsPlugin\bin-package"
+$project = Join-Path $root 'ThrumHapticsPlugin\src\ThrumHapticsPlugin.csproj'
 $dist = Join-Path $root 'dist'
 
-foreach ($d in @((Join-Path $root 'ThrumHapticsPlugin\bin'), (Join-Path $root 'ThrumHapticsPlugin\bin-mac'), $staging)) {
-    if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force }
+$scratch = @(
+    'ThrumHapticsPlugin\bin'
+    'ThrumHapticsPlugin\bin-mac'
+    'ThrumHapticsPlugin\bin-package'
+    'ThrumHapticsPlugin\src\obj'
+    'ThrumHapticsSettings\bin'
+    'ThrumHapticsSettings\obj'
+    'ThrumHapticsSettingsMac\bin'
+    'ThrumHapticsSettingsMac\obj'
+)
+
+function Reset-Tree {
+    foreach ($d in $scratch) {
+        $p = Join-Path $root $d
+        if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force }
+    }
 }
 
-Write-Host 'Building Windows...' -ForegroundColor Cyan
-# IsDevLoopBuild=false so packaging never rewrites the local .link file or asks a
-# running Plugin Service to reload mid-build.
-dotnet build $plugin -c $Configuration -p:IsDevLoopBuild=false --nologo -v minimal
-if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
+function New-Package {
+    param([string]$Platform, [string]$Rid, [string]$OutputTree, [string]$KeepKey, [string]$DropKey)
 
-Write-Host 'Building macOS (osx-arm64)...' -ForegroundColor Cyan
-dotnet build $plugin -c $Configuration -r osx-arm64 --nologo -v minimal
-if ($LASTEXITCODE -ne 0) { throw 'macOS build failed' }
+    Write-Host "Building $Platform from a clean tree..." -ForegroundColor Cyan
+    Reset-Tree
 
-# The Windows tree is the base because it already holds events/ and metadata/,
-# which are platform-neutral and must not be duplicated.
-New-Item -ItemType Directory -Path $staging -Force | Out-Null
-Copy-Item -Path (Join-Path $winOut '*') -Destination $staging -Recurse -Force
+    $args = @($project, '-c', $Configuration, '--nologo', '-v', 'minimal')
+    if ($Rid) { $args += @('-r', $Rid) } else { $args += '-p:IsDevLoopBuild=false' }
 
-# bin/mac, NESTED, matching pluginFolderMac in the manifest. A top-level 'mac'
-# sibling installed fine on Windows and failed on macOS, so the service does not
-# appear to resolve an arbitrary folder outside the Windows one.
-Copy-Item -Path (Join-Path $macOut 'bin') -Destination (Join-Path $staging 'bin\mac') -Recurse -Force
+    # Out-Host, not bare invocation. A PowerShell function returns everything it
+    # writes to the pipeline, so build and packer chatter would otherwise be
+    # returned alongside the package path.
+    dotnet build @args | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "$Platform build failed" }
+
+    $staging = Join-Path $root "ThrumHapticsPlugin\$OutputTree\$Configuration"
+
+    # The other platform's key must GO, not merely be ignored. A package declaring
+    # support for an OS whose files it does not carry is a broken install waiting
+    # to happen.
+    $manifest = Join-Path $staging 'metadata\LoupedeckPackage.yaml'
+    $text = [IO.File]::ReadAllText($manifest, [Text.Encoding]::UTF8)
+    $text = $text.Replace($DropKey, "# omitted: this is a $Platform-only package")
+    [IO.File]::WriteAllText($manifest, $text, (New-Object System.Text.UTF8Encoding($false)))
+
+    $declared = (($text -split "`n") | Where-Object { $_ -match '^version:' }) -replace 'version:\s*', ''
+    if ($declared.Trim() -ne $Version) {
+        throw "LoupedeckPackage.yaml declares '$($declared.Trim())' but -Version said '$Version'."
+    }
+
+    if (-not ((Get-Content $manifest -Encoding utf8) -match "^$KeepKey")) {
+        throw "$KeepKey missing from the $Platform manifest."
+    }
+
+    $stale = Get-ChildItem $staging -Recurse -File | Where-Object { $_.Name -match '(?i)mxhaptic' }
+    if ($stale) { throw "Files from the old plugin name survived: $($stale.Name -join ', ')" }
+
+    $out = Join-Path $dist ("ThrumHaptics_" + ($Version -replace '\.', '_') + "_$Platform.lplug4")
+    if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force }
+
+    logiplugintool pack $staging $out | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "pack failed for $Platform" }
+
+    logiplugintool verify $out | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "verify failed for $Platform" }
+
+    return $out
+}
 
 if (-not (Test-Path -LiteralPath $dist)) { New-Item -ItemType Directory -Path $dist | Out-Null }
 
-$out = Join-Path $dist ("ThrumHaptics_" + ($Version -replace '\.', '_') + '.lplug4')
-if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force }
-
-logiplugintool pack $staging $out
-if ($LASTEXITCODE -ne 0) { throw 'pack failed' }
-
-logiplugintool verify $out
-if ($LASTEXITCODE -ne 0) { throw 'verify failed' }
-
-# Sanity check rather than trust: the manifest version must match what was asked
-# for, and no file from a previous name may have survived into the package.
-$manifest = Get-Content (Join-Path $staging 'metadata\LoupedeckPackage.yaml') -Encoding utf8
-$declared = ($manifest | Select-String '^version:').Line -replace 'version:\s*', ''
-
-if ($declared.Trim() -ne $Version) {
-    throw "LoupedeckPackage.yaml declares $declared but -Version said $Version. Update the manifest."
-}
-
-$stale = Get-ChildItem $staging -Recurse -File | Where-Object { $_.Name -match '(?i)mxhaptic' }
-if ($stale) { throw "Stale files from the old plugin name: $($stale.Name -join ', ')" }
+$packages = @(
+    (New-Package -Platform 'Windows' -Rid $null -OutputTree 'bin' -KeepKey 'pluginFolderWin' -DropKey 'pluginFolderMac: bin')
+    (New-Package -Platform 'macOS' -Rid 'osx-arm64' -OutputTree 'bin-mac' -KeepKey 'pluginFolderMac' -DropKey 'pluginFolderWin: bin')
+)
 
 Write-Host ''
-Write-Host "Packed $out" -ForegroundColor Green
-Get-Item $out | Select-Object Name, @{n = 'MB'; e = { [math]::Round($_.Length / 1MB, 2) } }
+Get-Item $packages | Select-Object Name, @{n = 'MB'; e = { [math]::Round($_.Length / 1MB, 2) } }
