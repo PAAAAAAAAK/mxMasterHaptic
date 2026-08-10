@@ -122,6 +122,23 @@ namespace Loupedeck.MxHapticsPlugin.Input
         private static extern Boolean AXIsProcessTrusted();
 
         // Event tap placement and behaviour.
+        //
+        // TWO attachment points exist, and which one we use decides whether the
+        // thumb buttons are visible at all:
+        //
+        //   device -> [HID tap] -> ... Logi Options+ ... -> [session tap] -> apps
+        //
+        // At the session tap the thumb buttons never arrived - thousands of events
+        // logged, not one with buttonNumber 3 or 4 - while middle click came
+        // through as buttonNumber 2. Options+ has back/forward bound and appears to
+        // CONSUME those presses upstream, re-posting its own navigation action,
+        // which would put them beyond a session tap but in front of an HID tap.
+        //
+        // So we ask for the HID tap and fall back to the session tap. The HID tap
+        // needs the same Accessibility permission we already hold, and being
+        // earlier is arguably more correct for haptics anyway: the feedback should
+        // answer "you pressed the button", not "an application agreed to act on it".
+        private const UInt32 HidEventTap = 0;
         private const UInt32 SessionEventTap = 1;
         private const UInt32 HeadInsertEventTap = 0;
 
@@ -305,20 +322,39 @@ namespace Loupedeck.MxHapticsPlugin.Input
                     EventOtherMouseDown, EventOtherMouseUp, EventOtherMouseDragged,
                     EventScrollWheel);
 
+                // HID tap preferred, session tap as a fallback. The HID tap can be
+                // refused where the session tap is allowed, and a working plugin
+                // that misses two buttons beats no plugin at all.
+                var location = HidEventTap;
+
                 this._tap = CGEventTapCreate(
-                    SessionEventTap, HeadInsertEventTap, EventTapOptionListenOnly,
+                    location, HeadInsertEventTap, EventTapOptionListenOnly,
                     mask, this._callback, IntPtr.Zero);
+
+                if (this._tap == IntPtr.Zero)
+                {
+                    PluginLog.Info("[MxHaptics] HID-level event tap refused; falling back to the session tap.");
+
+                    location = SessionEventTap;
+
+                    this._tap = CGEventTapCreate(
+                        location, HeadInsertEventTap, EventTapOptionListenOnly,
+                        mask, this._callback, IntPtr.Zero);
+                }
 
                 if (this._tap == IntPtr.Zero)
                 {
                     // Overwhelmingly the Accessibility permission: CGEventTapCreate
                     // returns null rather than failing loudly when it is missing.
                     PluginLog.Error(
-                        "[MxHaptics] CGEventTapCreate returned NULL - the event tap could not be "
-                        + "created. This is almost always missing Accessibility permission for "
-                        + "LogiPluginService (System Settings > Privacy & Security > Accessibility).");
+                        "[MxHaptics] CGEventTapCreate returned NULL at both tap locations - no event "
+                        + "tap could be created. This is almost always missing Accessibility permission "
+                        + "for LogiPluginService (System Settings > Privacy & Security > Accessibility).");
                     return;
                 }
+
+                PluginLog.Info(
+                    $"[MxHaptics] Event tap created at {(location == HidEventTap ? "HID" : "session")} level.");
 
                 this._runLoopSource = CFMachPortCreateRunLoopSource(IntPtr.Zero, this._tap, IntPtr.Zero);
 

@@ -136,6 +136,11 @@ namespace Loupedeck.MxHapticsPlugin
         /// file cannot be exec'd at all and the settings window simply never opens,
         /// with nothing but a permissions error to show for it.
         ///
+        /// CONFIRMED REAL on device: the extracted file came out as
+        /// "OtherRead, GroupRead, UserWrite, UserRead" - no execute bit anywhere -
+        /// so without this the settings window would never open on macOS, with
+        /// nothing but a permissions error to explain it.
+        ///
         /// Cheap to make unconditional rather than conditional on having detected
         /// the problem: reading and setting a file mode costs nothing next to
         /// launching a process, and it keeps working if the packaging tool's
