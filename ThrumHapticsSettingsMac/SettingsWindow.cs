@@ -90,7 +90,13 @@ namespace ThrumHapticsSettingsMac
 
             var root = new DockPanel { LastChildFill = true };
 
-            root.Children.Add(Header());
+            // Dock MUST be set explicitly. A DockPanel child with no Dock docks
+            // LEFT, not top - so without this the header claimed a column as wide
+            // as its longest line and squeezed every setting into what was left,
+            // which looked like a width problem rather than a layout one.
+            var header = Header();
+            DockPanel.SetDock(header, Dock.Top);
+            root.Children.Add(header);
 
             var footer = this.Footer();
             DockPanel.SetDock(footer, Dock.Bottom);
@@ -140,13 +146,23 @@ namespace ThrumHapticsSettingsMac
 
             this.Content = root;
 
-            // Height is derived from the content rather than guessed, then capped,
-            // so the list is fully visible on a large display without ever
-            // exceeding a small one.
+            // Height follows the content, capped so a long list never opens taller
+            // than a laptop display. Measured against the real window rather than
+            // guessed: a row occupies about 46pt on macOS, not the 34 first assumed
+            // from Windows, which left the last section cut off on opening.
+            //
+            // The cap is a fallback, not the intent - the ScrollViewer handles
+            // anything that does not fit, and the window is resizable.
             var rows = HapticEvents.ForCurrentPlatform.Length;
-            var wanted = 190 + (rows * 34) + (sections.Length * 34);
+            var wanted = 210 + (rows * 46) + (sections.Length * 42);
 
-            this.Height = Math.Min(wanted, 780);
+            var workingHeight = this.Screens?.Primary?.WorkingArea.Height;
+
+            // Screens is null until the window has a handle on some backends, so
+            // fall back to a conservative fixed cap rather than assuming.
+            var cap = workingHeight is > 0 ? (Int32)(workingHeight.Value * 0.85) : 820;
+
+            this.Height = Math.Min(wanted, cap);
         }
 
         private static Control Header() => new StackPanel
