@@ -1,4 +1,4 @@
-# ==================================================================================================
+﻿# ==================================================================================================
 # GENERAL SETTINGS
 # ==================================================================================================
 
@@ -19,7 +19,7 @@ description: Universal haptic feedback for the MX Master 4 - clicks, scroll and 
 pluginFileName: ThrumHapticsPlugin.dll
 
 # Plugin version.
-version: 1.2.0
+version: 1.2.1
 
 # Author of the plugin. The author can be a company or an individual developer.
 author: PAAAAAAAAK
@@ -39,12 +39,16 @@ pluginFolderWin: bin
 # Location of plugin files on macOS (relative to the plugin base directory).
 # This parameter is required to support Mac.
 #
-# A SEPARATE folder from pluginFolderWin, unlike Logitech's own plugins which
+# A separate folder from pluginFolderWin, unlike Logitech's own plugins which
 # point both at the same place. They can share because they are pure managed
 # code; ours cannot. Windows ships uiohook.dll and a WinForms executable, macOS
 # ships Avalonia and its Skia renderer, and neither has any business on the other
 # platform. The Plugin Service loads only the folder matching the running OS.
-pluginFolderMac: mac
+#
+# NESTED under bin, not a sibling of it. A top-level 'mac' folder installed fine
+# on Windows and failed on macOS; the only documented example writes this path
+# nested, so the service appears not to resolve an arbitrary top-level folder.
+pluginFolderMac: bin/mac
 
 # List of devices the plugin is optimized for.
 supportedDevices:

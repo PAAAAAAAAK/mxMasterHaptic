@@ -53,7 +53,11 @@ if ($LASTEXITCODE -ne 0) { throw 'macOS build failed' }
 # which are platform-neutral and must not be duplicated.
 New-Item -ItemType Directory -Path $staging -Force | Out-Null
 Copy-Item -Path (Join-Path $winOut '*') -Destination $staging -Recurse -Force
-Copy-Item -Path (Join-Path $macOut 'bin') -Destination (Join-Path $staging 'mac') -Recurse -Force
+
+# bin/mac, NESTED, matching pluginFolderMac in the manifest. A top-level 'mac'
+# sibling installed fine on Windows and failed on macOS, so the service does not
+# appear to resolve an arbitrary folder outside the Windows one.
+Copy-Item -Path (Join-Path $macOut 'bin') -Destination (Join-Path $staging 'bin\mac') -Recurse -Force
 
 if (-not (Test-Path -LiteralPath $dist)) { New-Item -ItemType Directory -Path $dist | Out-Null }
 
