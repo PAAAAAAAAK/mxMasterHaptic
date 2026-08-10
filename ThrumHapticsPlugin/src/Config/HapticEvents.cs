@@ -55,10 +55,28 @@ namespace Loupedeck.ThrumHapticsPlugin.Config
         /// </remarks>
         public Boolean WindowsOnly { get; }
 
+        /// <summary>Events that exist only on macOS.</summary>
+        /// <remarks>
+        /// The mirror of <see cref="WindowsOnly"/>, and it exists for one event:
+        /// macOS cannot tell back from forward, so it offers a single combined
+        /// thumb-button row where Windows offers two separate ones.
+        /// </remarks>
+        public Boolean MacOnly { get; }
+
+        /// <summary>Events whose spacing the user can tune.</summary>
+        /// <remarks>
+        /// Only the two wheels. A click fires once per click and there is nothing
+        /// to space out; a wheel fires continuously while it turns, and how far it
+        /// should travel between ticks is a matter of taste that no default gets
+        /// right for everyone. It was tuned four times by feel across two platforms
+        /// before it became obvious that the tuning belonged to the user.
+        /// </remarks>
+        public Boolean HasDensity { get; }
+
         public HapticEventDef(
             String id, String category, String displayName,
             String defaultWaveform, Boolean defaultEnabled = true, String groupKey = null,
-            Boolean windowsOnly = false)
+            Boolean windowsOnly = false, Boolean macOnly = false, Boolean hasDensity = false)
         {
             this.Id = id;
             this.Category = category;
@@ -67,6 +85,8 @@ namespace Loupedeck.ThrumHapticsPlugin.Config
             this.DefaultEnabled = defaultEnabled;
             this.GroupKey = groupKey;
             this.WindowsOnly = windowsOnly;
+            this.MacOnly = macOnly;
+            this.HasDensity = hasDensity;
         }
 
         /// <summary>Label shown in the editor's event dropdown.</summary>
@@ -88,6 +108,15 @@ namespace Loupedeck.ThrumHapticsPlugin.Config
         public const String MouseMiddle = "mouse.middle";
         public const String MouseBack = "mouse.back";
         public const String MouseForward = "mouse.forward";
+
+        /// <summary>Back and forward as ONE event. macOS only.</summary>
+        /// <remarks>
+        /// Not a simplification for its own sake - macOS genuinely cannot tell the
+        /// two apart. Options+ converts both presses into an NSEvent gesture, and
+        /// every field on that event is identical between them. One row is the
+        /// honest shape of what we can detect.
+        /// </remarks>
+        public const String MouseThumb = "mouse.thumb";
 
         // --- Stage 2: scroll -----------------------------------------------------
         public const String ScrollVertical = "scroll.vertical";
@@ -137,18 +166,34 @@ namespace Loupedeck.ThrumHapticsPlugin.Config
             new(MouseBack, "Clicks", "Back (thumb)", Waveforms.SharpCollision, windowsOnly: true),
             new(MouseForward, "Clicks", "Forward (thumb)", Waveforms.SharpCollision, windowsOnly: true),
 
+            // macOS reaches the thumb buttons INDIRECTLY. The presses themselves
+            // never enter the HID interface - that was measured to exhaustion and
+            // remains true - but Options+ posts an NSEvent gesture in their place,
+            // and that we can see. The gesture carries the posting process's PID,
+            // which is what separates it from a real trackpad swipe.
+            //
+            // OFF BY DEFAULT, unlike its Windows counterparts, because the
+            // detection is a heuristic rather than a fact. The thumb WHEEL emits
+            // the same gesture from the same process, and the only thing telling
+            // them apart is that a wheel roll has scroll events around it. Rolling
+            // the wheel after a pause can therefore produce one stray tick. That
+            // is a fair trade for someone who wants thumb-button feedback, and not
+            // one to impose on someone who never asked for it.
+            new(MouseThumb, "Clicks", "Thumb button (back / forward)", Waveforms.SharpCollision,
+                defaultEnabled: false, macOnly: true),
+
             // Scroll fires FAR more often than clicks, so it gets the lightest
             // waveform available - anything heavier becomes exhausting within
             // seconds. See ScrollCooldownMs in MouseInputSource for the rate limit
             // that stops fast scrolling turning into a continuous buzz.
-            new(ScrollVertical, "Scroll", "Scroll wheel", Waveforms.SubtleCollision),
+            new(ScrollVertical, "Scroll", "Scroll wheel", Waveforms.SubtleCollision, hasDensity: true),
 
             // The thumb wheel gets a sharper waveform than the main wheel for two
             // reasons: it sits at the side of the mouse, further from the haptic
             // motor (the same reason the thumb buttons feel weak), and it has no
             // physical detents, so the haptic is the ONLY thing providing a sense
             // of discrete steps. A soft waveform there just reads as vibration.
-            new(ScrollHorizontal, "Scroll", "Thumb wheel", Waveforms.SharpCollision),
+            new(ScrollHorizontal, "Scroll", "Thumb wheel", Waveforms.SharpCollision, hasDensity: true),
 
             // Drag start/end bracket a gesture, so they want to feel like a pair:
             // a firmer "grab" and a softer "let go". Grouped for display, but each
@@ -191,7 +236,34 @@ namespace Loupedeck.ThrumHapticsPlugin.Config
         /// so all three filter identically without anything crossing the pipe.
         /// </remarks>
         public static readonly HapticEventDef[] ForCurrentPlatform =
-            All.Where(e => !e.WindowsOnly || OperatingSystem.IsWindows()).ToArray();
+            All.Where(e =>
+                (!e.WindowsOnly || OperatingSystem.IsWindows())
+                && (!e.MacOnly || OperatingSystem.IsMacOS())).ToArray();
+
+        /// <summary>
+        /// How closely wheel haptics are spaced. 1 is sparsest, 5 densest.
+        /// </summary>
+        /// <remarks>
+        /// An abstract SCALE, not a value, because the underlying knob is different
+        /// everywhere: milliseconds for the vertical wheel, rotation units for the
+        /// thumb wheel on Windows, points of travel for it on macOS. Each input
+        /// source maps this level onto its own units, so one control means the same
+        /// thing to the user on both platforms without pretending the mechanisms
+        /// are the same.
+        ///
+        /// Defined here because this file is compiled into the plugin and both
+        /// settings applications, so the labels cannot drift between them.
+        /// </remarks>
+        public const Int32 DefaultDensity = 3;
+
+        public static readonly String[] DensityLabels =
+        {
+            "Sparse", "Light", "Standard", "Dense", "Very dense",
+        };
+
+        /// <summary>Clamps a stored or received level into the valid range.</summary>
+        public static Int32 ClampDensity(Int32 level) =>
+            level < 1 ? 1 : level > DensityLabels.Length ? DensityLabels.Length : level;
 
         private static readonly Dictionary<String, HapticEventDef> ById =
             All.ToDictionary(e => e.Id, StringComparer.OrdinalIgnoreCase);
