@@ -1,4 +1,4 @@
-# MX Haptics
+# Thrum Haptics
 
 Universal haptic feedback for the **Logitech MX Master 4** — clicks, scroll and
 gestures, in every application.
@@ -14,13 +14,13 @@ actually do with a mouse, everywhere you do them.
 - **Yours to tune.** Every input can be switched off or given a different
   waveform, with a live preview so you choose by feel rather than by name.
 
-### ⬇ [Download MX Haptics](https://github.com/PAAAAAAAAK/mxMasterHaptic/releases)
+### ⬇ [Download Thrum Haptics](https://github.com/PAAAAAAAAK/thrum-haptics/releases)
 
 Grab the latest `.lplug4`, double-click it, then **confirm the prompt in Logi
 Options+**. Needs an MX Master 4, Logi Options+, and Windows x64.
 
 <p align="center">
-  <img src="docs/settings-window.png" alt="MX Haptics settings window" width="520">
+  <img src="docs/settings-window.png" alt="Thrum Haptics settings window" width="520">
 </p>
 
 ## What it does
@@ -59,7 +59,7 @@ The haptic supplies the detents the hardware doesn't have.
 ## Installing
 
 1. Download the latest `.lplug4` from
-   [Releases](https://github.com/PAAAAAAAAK/mxMasterHaptic/releases).
+   [Releases](https://github.com/PAAAAAAAAK/thrum-haptics/releases).
 2. Double-click it.
 3. **Confirm the install prompt that appears in Logi Options+.**
 
@@ -84,7 +84,7 @@ To uninstall, right-click the same `.lplug4` and choose **Uninstall Plugin**.
 
 ## Settings
 
-Bind the **Haptic Settings** action (Options+ → *All Actions → MxHaptics →
+Bind the **Haptic Settings** action (Options+ → *All Actions → Thrum Haptics →
 Haptics*) to a key or an Actions Ring slot. Pressing it opens the settings
 window.
 
@@ -119,7 +119,7 @@ motor hits in Options+.
 
 ```
 dotnet tool install --global LogiPluginTool
-dotnet build MxHapticsPlugin/src
+dotnet build ThrumHapticsPlugin/src
 ```
 
 `dotnet build` also builds the settings application, copies it into the plugin
@@ -130,16 +130,16 @@ it to reload — so the plugin runs straight from your build output. Use
 To package a release:
 
 ```
-dotnet build MxHapticsPlugin/src -c Release
-logiplugintool pack ./MxHapticsPlugin/bin/Release ./dist/MxHaptics_1.0.lplug4
-logiplugintool verify ./dist/MxHaptics_1.0.lplug4
+dotnet build ThrumHapticsPlugin/src -c Release
+logiplugintool pack ./ThrumHapticsPlugin/bin/Release ./dist/ThrumHaptics_1.0.lplug4
+logiplugintool verify ./dist/ThrumHaptics_1.0.lplug4
 ```
 
 ### Project layout
 
-- **`MxHapticsPlugin`** — the plugin. Targets plain `net10.0` with no desktop
+- **`ThrumHapticsPlugin`** — the plugin. Targets plain `net10.0` with no desktop
   framework references (see below).
-- **`MxHapticsSettings`** — the settings window, a WinForms executable bundled
+- **`ThrumHapticsSettings`** — the settings window, a WinForms executable bundled
   into the same package. Talks to the plugin over a local named pipe.
 
 `HapticEvents.cs` and `Waveforms.cs` are compiled into **both** projects rather

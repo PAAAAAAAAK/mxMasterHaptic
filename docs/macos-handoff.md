@@ -77,7 +77,7 @@ plugin load to make this visible.
 
 A `.lplug4` is a zip written on Windows, which has no Unix mode to store. The
 extracted settings executable came out `OtherRead, GroupRead, UserWrite,
-UserRead` — no execute bit anywhere. `EnsureExecutable` in `MxHapticsPlugin.cs`
+UserRead` — no execute bit anywhere. `EnsureExecutable` in `ThrumHapticsPlugin.cs`
 restores it at launch. **If the build moves to the Mac and the zip starts
 preserving modes, keep this anyway** — it is cheap and it protects a failure mode
 that is invisible until it happens.
@@ -329,10 +329,10 @@ or app runs them — which is itself the finding. `taps` needs nothing.
 Needs the .NET 10 SDK and `dotnet tool install --global LogiPluginTool`.
 
 ```bash
-dotnet build MxHapticsPlugin/src -c Release -r osx-arm64
+dotnet build ThrumHapticsPlugin/src -c Release -r osx-arm64
 ```
 
-`MxHapticsPlugin.csproj` already carries the macOS paths. On a Mac,
+`ThrumHapticsPlugin.csproj` already carries the macOS paths. On a Mac,
 `IsDevLoopBuild` becomes true, so the build writes a `.link` file into the
 Plugin Service's plugin directory and sends a reload — the same fast loop
 Windows has. **This path has never been executed**, having only ever been
@@ -343,8 +343,8 @@ task.
 Packaging, if needed:
 
 ```bash
-logiplugintool pack ./MxHapticsPlugin/bin-mac/Release ./dist/MxHaptics_mac.lplug4
-logiplugintool verify ./dist/MxHaptics_mac.lplug4
+logiplugintool pack ./ThrumHapticsPlugin/bin-mac/Release ./dist/ThrumHaptics_mac.lplug4
+logiplugintool verify ./dist/ThrumHaptics_mac.lplug4
 ```
 
 Note `bin-mac/`, not `bin/` — macOS builds go to a separate tree so they never
@@ -353,7 +353,7 @@ clobber the Windows output.
 Plugin log:
 
 ```
-~/Library/Application Support/Logi/LogiPluginService/Logs/plugin_logs/MxHaptics.log
+~/Library/Application Support/Logi/LogiPluginService/Logs/plugin_logs/ThrumHaptics.log
 ```
 
 The settings application's stdout and stderr are captured into that same log, so

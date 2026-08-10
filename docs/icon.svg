@@ -1,6 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="MX Haptics app icon">
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Thrum Haptics app icon">
   <!-- Source of truth for metadata/Icon256x256.png. Re-render after editing.
-       Values are the defaults from the Claude Design project "MX Haptics App Icon":
+       Values are the defaults from the Claude Design project, authored before the
+       rename and so still filed there as "MX Haptics App Icon":
        bg #4A2CC4, fg #F7F5FF, corner radius 56. -->
   <rect x="0" y="0" width="256" height="256" rx="56" fill="#4A2CC4"/>
 

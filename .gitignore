@@ -1,4 +1,4 @@
-# Build output (also covered by MxHapticsPlugin/.gitignore)
+# Build output (also covered by ThrumHapticsPlugin/.gitignore)
 [Bb]in/
 [Oo]bj/
 

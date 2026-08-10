@@ -1,9 +1,9 @@
-# End User Licence Agreement — MX Haptics
+# End User Licence Agreement — Thrum Haptics
 
 **Last updated: 9 August 2026**
 
 This End User Licence Agreement ("Agreement") is between you and PAAAAAAAAK
-("the Author") and governs your use of the MX Haptics plugin ("the Software").
+("the Author") and governs your use of the Thrum Haptics plugin ("the Software").
 
 By installing or using the Software you agree to these terms. If you do not
 agree, do not install or use it.
@@ -75,4 +75,4 @@ component. Those components remain subject to their own licences.
 
 ---
 
-Source, issues and releases: https://github.com/PAAAAAAAAK/mxMasterHaptic
+Source, issues and releases: https://github.com/PAAAAAAAAK/thrum-haptics
