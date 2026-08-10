@@ -313,17 +313,21 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
         private const Int64 DragMinSeparationMs = 150;
         private const Int32 ScreenEdgeReleasePx = 8;
 
+        /// <summary>How far past an edge to look for another display.</summary>
+        /// <remarks>
+        /// Small, because macOS snaps display arrangements together - but not zero,
+        /// since the point exactly on a boundary belongs to neither rectangle.
+        /// </remarks>
+        private const Double EdgeProbePx = 2;
+
         private Boolean _atScreenEdge;
 
-        // Union of every active display, cached because mouse-move fires constantly
-        // and this must stay cheap. Re-read periodically so plugging in a monitor or
-        // changing resolution is picked up without a display-reconfiguration callback.
-        private Double _screenLeft;
-        private Double _screenTop;
-        private Double _screenRight;
-        private Double _screenBottom;
-        private Int64 _virtualScreenReadMs;
-        private const Int64 VirtualScreenTtlMs = 5000;
+        // EVERY display, not their union. Cached because mouse-move fires constantly
+        // and this must stay cheap; re-read periodically so plugging in a monitor is
+        // picked up without a display-reconfiguration callback.
+        private CGRect[] _displays = Array.Empty<CGRect>();
+        private Int64 _displaysReadMs;
+        private const Int64 DisplaysTtlMs = 5000;
 
         private readonly Dictionary<String, Int64> _lastFiredMs = new();
 
@@ -643,23 +647,17 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
                 return;
             }
 
-            this.RefreshVirtualScreen();
-
-            if (this._screenRight <= this._screenLeft)
-            {
-                return; // No usable display list; nothing to compare against.
-            }
+            this.RefreshDisplays();
 
             var p = CGEventGetLocation(@event);
+            var current = this.DisplayContaining(p.X, p.Y);
 
-            // Bounds are exclusive on the right and bottom, so the last addressable
-            // point is just inside them.
-            var atEdge = p.X <= this._screenLeft
-                      || p.Y <= this._screenTop
-                      || p.X >= this._screenRight - 1
-                      || p.Y >= this._screenBottom - 1;
+            if (current == null)
+            {
+                return; // Cursor is nowhere we know about; nothing to compare to.
+            }
 
-            if (atEdge)
+            if (this.AtWall(current.Value, p, tolerance: 1))
             {
                 if (!this._atScreenEdge)
                 {
@@ -672,67 +670,99 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
 
             // Re-arm only after a clear retreat, so resting against the edge does
             // not machine-gun on sub-pixel jitter.
-            if (this._atScreenEdge
-                && p.X > this._screenLeft + ScreenEdgeReleasePx
-                && p.Y > this._screenTop + ScreenEdgeReleasePx
-                && p.X < this._screenRight - 1 - ScreenEdgeReleasePx
-                && p.Y < this._screenBottom - 1 - ScreenEdgeReleasePx)
+            if (this._atScreenEdge && !this.AtWall(current.Value, p, ScreenEdgeReleasePx))
             {
                 this._atScreenEdge = false;
             }
         }
 
-        /// <summary>Refreshes the cached bounds of the whole display arrangement.</summary>
+        /// <summary>
+        /// Whether the cursor is against an edge it genuinely cannot cross.
+        /// </summary>
         /// <remarks>
-        /// The UNION of every active display, not one screen: with several monitors
-        /// the cursor crosses between them freely, and only the outer boundary of
-        /// the whole arrangement is a wall it cannot pass. Windows hands this over
-        /// ready-made as SM_CXVIRTUALSCREEN; macOS has no equivalent, so it is
-        /// assembled from the display list.
+        /// The bounding box of all displays is the WRONG model, and a stacked
+        /// arrangement shows why. Put a wide external monitor above a narrower
+        /// laptop screen and the union is wider than either: while the cursor is on
+        /// the laptop it can never reach the union's left or right, because those
+        /// x-coordinates only exist on the display above. Only the top and bottom of
+        /// the union are ever touchable, which is exactly how it behaved.
+        ///
+        /// A union also cannot tell a wall from the seam between two monitors, where
+        /// the cursor passes straight through and a haptic would be wrong.
+        ///
+        /// So the question is asked per edge of the display the cursor is actually
+        /// on: is there another display just beyond it? If not, it is a wall.
         /// </remarks>
-        private void RefreshVirtualScreen()
+        private Boolean AtWall(CGRect d, CGPoint p, Double tolerance)
+        {
+            var right = d.Origin.X + d.Size.Width;
+            var bottom = d.Origin.Y + d.Size.Height;
+
+            // Probed from the DISPLAY's edge rather than the cursor, so the answer
+            // does not change as the cursor creeps within the tolerance band.
+            if (p.X <= d.Origin.X + tolerance
+                && this.DisplayContaining(d.Origin.X - EdgeProbePx, p.Y) == null)
+            {
+                return true;
+            }
+
+            if (p.X >= right - 1 - tolerance
+                && this.DisplayContaining(right + EdgeProbePx, p.Y) == null)
+            {
+                return true;
+            }
+
+            if (p.Y <= d.Origin.Y + tolerance
+                && this.DisplayContaining(p.X, d.Origin.Y - EdgeProbePx) == null)
+            {
+                return true;
+            }
+
+            return p.Y >= bottom - 1 - tolerance
+                && this.DisplayContaining(p.X, bottom + EdgeProbePx) == null;
+        }
+
+        private CGRect? DisplayContaining(Double x, Double y)
+        {
+            foreach (var d in this._displays)
+            {
+                if (x >= d.Origin.X && x < d.Origin.X + d.Size.Width
+                    && y >= d.Origin.Y && y < d.Origin.Y + d.Size.Height)
+                {
+                    return d;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>Refreshes the cached bounds of every active display.</summary>
+        private void RefreshDisplays()
         {
             var now = Environment.TickCount64;
 
-            if (this._screenRight > this._screenLeft && (now - this._virtualScreenReadMs) <= VirtualScreenTtlMs)
+            if (this._displays.Length > 0 && (now - this._displaysReadMs) <= DisplaysTtlMs)
             {
                 return;
             }
 
-            this._virtualScreenReadMs = now;
+            this._displaysReadMs = now;
 
-            var displays = new UInt32[16];
+            var ids = new UInt32[16];
 
-            if (CGGetActiveDisplayList((UInt32)displays.Length, displays, out var count) != 0 || count == 0)
+            if (CGGetActiveDisplayList((UInt32)ids.Length, ids, out var count) != 0 || count == 0)
             {
                 return;
             }
 
-            Double left = 0, top = 0, right = 0, bottom = 0;
+            var bounds = new CGRect[count];
 
             for (var i = 0; i < count; i++)
             {
-                var b = CGDisplayBounds(displays[i]);
-
-                if (i == 0)
-                {
-                    left = b.Origin.X;
-                    top = b.Origin.Y;
-                    right = b.Origin.X + b.Size.Width;
-                    bottom = b.Origin.Y + b.Size.Height;
-                    continue;
-                }
-
-                left = Math.Min(left, b.Origin.X);
-                top = Math.Min(top, b.Origin.Y);
-                right = Math.Max(right, b.Origin.X + b.Size.Width);
-                bottom = Math.Max(bottom, b.Origin.Y + b.Size.Height);
+                bounds[i] = CGDisplayBounds(ids[i]);
             }
 
-            this._screenLeft = left;
-            this._screenTop = top;
-            this._screenRight = right;
-            this._screenBottom = bottom;
+            this._displays = bounds;
         }
 
         private void OnScroll(IntPtr @event)
