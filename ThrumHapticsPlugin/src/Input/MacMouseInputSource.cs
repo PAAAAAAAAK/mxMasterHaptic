@@ -67,6 +67,21 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
         // inside the Plugin Service minutes after everything looked fine.
         private CGEventTapCallBack _callback;
 
+        // --- Thumb buttons, the indirect route --------------------------------
+        //
+        // A SECOND tap, at session level, listen-only. Session level specifically:
+        // the primary tap sits at HID level, UPSTREAM of where Options+ injects,
+        // so the gesture it posts in place of a thumb button is invisible there.
+        //
+        // This exists because the earlier conclusion was too broad. Four
+        // observation points proved the thumb button PRESSES never enter the HID
+        // interface, and that remains true - but every one of them looked for a
+        // mouse button. None looked for what Options+ sends instead, which turns
+        // out to be an NSEvent gesture that arrives here perfectly reliably.
+        private CGEventTapCallBack _diagnosticCallback;
+        private IntPtr _diagnosticTap;
+        private IntPtr _diagnosticRunLoopSource;
+
         public String Name => "Mouse (macOS)";
 
         public MacMouseInputSource(HapticOutput haptics, HapticSettings settings)
@@ -91,6 +106,43 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
 
         [DllImport(CoreGraphics)]
         private static extern Int64 CGEventGetIntegerValueField(IntPtr @event, UInt32 field);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct CGPoint
+        {
+            public Double X;
+            public Double Y;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct CGSize
+        {
+            public Double Width;
+            public Double Height;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct CGRect
+        {
+            public CGPoint Origin;
+            public CGSize Size;
+        }
+
+        /// <summary>Cursor position in global display space, origin top-left.</summary>
+        /// <remarks>
+        /// NOT CGEventGetUnflippedLocation, which puts the origin at the bottom
+        /// left. This one shares its coordinate system with CGDisplayBounds, so the
+        /// two can be compared without converting between them.
+        /// </remarks>
+        [DllImport(CoreGraphics)]
+        private static extern CGPoint CGEventGetLocation(IntPtr @event);
+
+        [DllImport(CoreGraphics)]
+        private static extern Int32 CGGetActiveDisplayList(
+            UInt32 maxDisplays, [Out] UInt32[] activeDisplays, out UInt32 displayCount);
+
+        [DllImport(CoreGraphics)]
+        private static extern CGRect CGDisplayBounds(UInt32 display);
 
         [DllImport(CoreFoundation)]
         private static extern IntPtr CFMachPortCreateRunLoopSource(
@@ -164,6 +216,7 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
         private const UInt32 EventLeftMouseUp = 2;
         private const UInt32 EventRightMouseDown = 3;
         private const UInt32 EventRightMouseUp = 4;
+        private const UInt32 EventMouseMoved = 5;
         private const UInt32 EventLeftMouseDragged = 6;
         private const UInt32 EventRightMouseDragged = 7;
         private const UInt32 EventScrollWheel = 22;
@@ -174,6 +227,25 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
         // Delivered in place of a real event when the OS switches the tap off.
         private const UInt32 EventTapDisabledByTimeout = 0xFFFFFFFE;
         private const UInt32 EventTapDisabledByUserInput = 0xFFFFFFFF;
+
+        // --- Gesture event types, for the back/forward diagnostic --------------
+        //
+        // These are NSEvent types that appear in the CGEventTap stream but have no
+        // kCGEvent* constant, which is why the original thumb-button measurement
+        // never saw them: every observation point looked for a mouse BUTTON, and
+        // ruled buttons out conclusively. It never looked at what Options+ posts
+        // INSTEAD. A swipe is not a mouse event and would not have shown up.
+        //
+        // NOTE what is deliberately absent: 10 (keyDown), 11 (keyUp) and 12
+        // (flagsChanged). Widening into gestures is not a licence to widen into
+        // the keyboard, which this plugin does not tap on any platform, ever.
+        private const UInt32 EventRotate = 18;
+        private const UInt32 EventBeginGesture = 19;
+        private const UInt32 EventEndGesture = 20;
+        private const UInt32 EventGesture = 29;
+        private const UInt32 EventMagnify = 30;
+        private const UInt32 EventSwipe = 31;
+        private const UInt32 EventSmartMagnify = 32;
 
         private const UInt32 FieldMouseEventButtonNumber = 3;
         private const UInt32 FieldMouseEventDeltaX = 4;
@@ -186,6 +258,15 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
         // several events arrive per detent and something here has to stand in for
         // the detent boundary. Logged until we know which field actually tracks
         // physical movement rather than post-acceleration distance.
+        /// <summary>PID of the process that posted the event, or 0 for real hardware.</summary>
+        /// <remarks>
+        /// The single most useful field in the back/forward diagnostic. If Options+
+        /// substitutes a navigation gesture for the thumb buttons, the substitute
+        /// carries Options+'s PID; a genuine wheel roll carries 0. That tells
+        /// injected apart from physical without any guesswork about deltas.
+        /// </remarks>
+        private const UInt32 FieldEventSourceUnixProcessId = 41;
+
         private const UInt32 FieldScrollWheelEventIsContinuous = 88;
         private const UInt32 FieldScrollWheelEventPointDeltaAxis1 = 96;
         private const UInt32 FieldScrollWheelEventPointDeltaAxis2 = 97;
@@ -270,11 +351,99 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
         // for now: extracting shared pacing logic is worth doing, but not before
         // the macOS side has settled enough to know what genuinely IS shared.
 
-        private const Int64 ScrollCooldownMs = 50;
+        /// <summary>Minimum gap between wheel haptics, in milliseconds.</summary>
+        /// <remarks>
+        /// Higher than Windows' 50, and the reason is measured rather than felt.
+        /// macOS reports this wheel as CONTINUOUS (kCGScrollWheelEventIsContinuous
+        /// is 1 on every event) and accelerates hard: rolled slowly one detent
+        /// reports pt1 of about 3, and in a fast flick about 147. Same wheel, same
+        /// detents, 45x the reported distance.
+        ///
+        /// So physical detents CANNOT be reconstructed here. Neither lines nor
+        /// points survive the acceleration, which rules out the accumulator that
+        /// synthesizes them on Windows. What is left is a rate limit, and its value
+        /// is a judgement about feel rather than a correct answer.
+        ///
+        /// Indexed by the user's density level, and identical to the Windows table
+        /// on purpose: someone moving between machines should not have to relearn
+        /// what a flick feels like. Level 3 is the default at 35ms.
+        ///
+        /// Getting here took going the WRONG WAY first. 70 was tried on the theory
+        /// that a fast flick was over-firing into a buzz; on device it read as too
+        /// sparse to track the detents. The flick wanted MORE haptics, not fewer,
+        /// and this floor is the only thing withholding them - macOS delivers
+        /// roughly 100 accelerated events a second, so nothing else paces them.
+        ///
+        /// Which is the whole argument for making it a setting: it was tuned by
+        /// feel four times across two platforms and landed somewhere different each
+        /// time, because there is no correct answer to find.
+        /// </remarks>
+        private static readonly Int64[] ScrollCooldownByDensity = { 70, 50, 35, 25, 20 };
+
+        /// <summary>Minimum gap between thumb-wheel haptics.</summary>
+        /// <remarks>
+        /// Longer than the main wheel for two reasons that compound: the thumb
+        /// wheel has NO physical detents, so the haptic is the only thing marking
+        /// steps and an uneven one reads as a rattle rather than a scale; and it
+        /// carries the sharpest click-grade waveform because it sits furthest from
+        /// the motor. Sharp plus frequent is the worst combination available.
+        ///
+        /// It rarely binds - the log shows thumb-wheel events arriving 127-955ms
+        /// apart - so this is a ceiling for fast rolls rather than everyday pacing.
+        /// It still scales with density, or the densest levels would be capped by a
+        /// floor the user never chose.
+        /// </remarks>
+        private static readonly Int64[] ThumbWheelCooldownByDensity = { 90, 70, 50, 35, 25 };
+
+        /// <summary>Thumb-wheel travel, in points, between synthesized detents.</summary>
+        /// <remarks>
+        /// The macOS counterpart to ThumbWheelDetentUnits on Windows. Both answer
+        /// the same question - how far should the thumb move between ticks - because
+        /// this wheel has no physical detents and the haptic IS the detent.
+        ///
+        /// Firing on the line counter alone capped the thumb wheel at roughly 4.6
+        /// ticks a second regardless of speed, which is what "not dense enough"
+        /// meant. Accumulating points instead ties ticks to travel: roll slowly and
+        /// they come slowly, roll fast and they come fast.
+        ///
+        /// Indexed by density level; 12 points is the default. Note that the line
+        /// counter still fires a tick on its own, so the sparse levels converge on
+        /// that floor - roughly 4.6 a second - rather than going quieter still.
+        /// </remarks>
+        private static readonly Int64[] ThumbWheelPointsByDensity = { 36, 24, 12, 8, 5 };
+
+        private Int64 _thumbWheelPixels;
+
+        /// <summary>The time floor for an event at the user's chosen density.</summary>
+        private Int64 CooldownFor(String eventId, Int64[] table) =>
+            table[HapticEvents.ClampDensity(this._settings.DensityFor(eventId)) - 1];
+
         private const Int32 DragThresholdPx = 5;
         private const Int64 DragMinSeparationMs = 150;
+        private const Int32 ScreenEdgeReleasePx = 8;
+
+        /// <summary>How far past an edge to look for another display.</summary>
+        /// <remarks>
+        /// Small, because macOS snaps display arrangements together - but not zero,
+        /// since the point exactly on a boundary belongs to neither rectangle.
+        /// </remarks>
+        private const Double EdgeProbePx = 2;
+
+        private Boolean _atScreenEdge;
+
+        // EVERY display, not their union. Cached because mouse-move fires constantly
+        // and this must stay cheap; re-read periodically so plugging in a monitor is
+        // picked up without a display-reconfiguration callback.
+        private CGRect[] _displays = Array.Empty<CGRect>();
+        private Int64 _displaysReadMs;
+        private const Int64 DisplaysTtlMs = 5000;
 
         private readonly Dictionary<String, Int64> _lastFiredMs = new();
+
+        // Feed the Verbose scroll trace in OnScroll, which is how the pacing above
+        // was tuned and how it would be re-tuned.
+        private Int64 _lastScrollMs;
+        private Int32 _scrollSubLineEvents;
 
         /// <summary>Per-button drag tracking. Buttons can be held simultaneously.</summary>
         /// <remarks>
@@ -332,7 +501,7 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
                     EventLeftMouseDown, EventLeftMouseUp, EventLeftMouseDragged,
                     EventRightMouseDown, EventRightMouseUp, EventRightMouseDragged,
                     EventOtherMouseDown, EventOtherMouseUp, EventOtherMouseDragged,
-                    EventScrollWheel);
+                    EventScrollWheel, EventMouseMoved);
 
                 // HID tap preferred, session tap as a fallback. The HID tap can be
                 // refused where the session tap is allowed, and a working plugin
@@ -383,6 +552,11 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
 
                 PluginLog.Info("[ThrumHaptics] macOS event tap ENABLED - now receiving system-wide mouse events.");
 
+                // Shares this thread's run loop deliberately: one thread, one loop,
+                // two sources. A second thread would buy nothing and would need its
+                // own shutdown path.
+                this.StartDiagnosticTap();
+
                 // Blocks until CFRunLoopStop is called from Stop().
                 CFRunLoopRun();
 
@@ -394,6 +568,149 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
                 // background thread, leaving a plugin that loads fine and never buzzes.
                 PluginLog.Error($"[ThrumHaptics] macOS event tap failed: {ex}");
             }
+        }
+
+        /// <summary>
+        /// Starts the session-level diagnostic tap. Never fires haptics.
+        /// </summary>
+        /// <remarks>
+        /// Failure here is deliberately non-fatal and logged at Info rather than
+        /// Error: the plugin's actual job is done by the primary tap, and a
+        /// diagnostic that cannot start must not look like a broken plugin.
+        /// </remarks>
+        private void StartDiagnosticTap()
+        {
+            this._diagnosticCallback = this.OnDiagnosticEvent;
+
+            // Gestures, plus scroll. Scroll is not acted on here - the primary tap
+            // already handles it - but its TIMING is what distinguishes a thumb
+            // wheel roll from a thumb button press, so this tap has to see it.
+            var mask = MaskOf(
+                EventRotate, EventBeginGesture, EventEndGesture, EventGesture,
+                EventMagnify, EventSwipe, EventSmartMagnify,
+                EventScrollWheel);
+
+            this._diagnosticTap = CGEventTapCreate(
+                SessionEventTap, HeadInsertEventTap, EventTapOptionListenOnly,
+                mask, this._diagnosticCallback, IntPtr.Zero);
+
+            if (this._diagnosticTap == IntPtr.Zero)
+            {
+                PluginLog.Info(
+                    "[ThrumHaptics] session-level gesture tap refused; thumb-button haptics unavailable. "
+                    + "Everything else is unaffected.");
+
+                this._diagnosticCallback = null;
+                return;
+            }
+
+            this._diagnosticRunLoopSource =
+                CFMachPortCreateRunLoopSource(IntPtr.Zero, this._diagnosticTap, IntPtr.Zero);
+
+            if (this._diagnosticRunLoopSource == IntPtr.Zero)
+            {
+                PluginLog.Info("[ThrumHaptics] gesture tap run loop source is NULL; skipping it.");
+                return;
+            }
+
+            CFRunLoopAddSource(this._runLoop, this._diagnosticRunLoopSource, GetCommonModes());
+            CGEventTapEnable(this._diagnosticTap, true);
+
+            PluginLog.Info("[ThrumHaptics] session-level gesture tap enabled (thumb buttons).");
+        }
+
+        /// <summary>
+        /// How long after a scroll event a gesture is still assumed to belong to it.
+        /// </summary>
+        /// <remarks>
+        /// The thumb WHEEL and the thumb BUTTONS both emit type 29 from the same
+        /// process, so the source PID cannot separate them and only timing can. A
+        /// wheel roll has scroll events all around its gestures; a button press
+        /// had no scroll within eighteen seconds.
+        ///
+        /// 600ms is generous on purpose. The leak it cannot close is a roll that
+        /// starts after a pause: the wheel emits its first gesture about 150ms
+        /// BEFORE its first scroll event, so nothing backward-looking can catch it.
+        /// Closing that would mean holding the haptic back to see whether scroll
+        /// follows, and a delayed click haptic is worse than an occasional extra
+        /// one. This is why the event ships disabled by default.
+        /// </remarks>
+        private const Int64 GestureScrollProximityMs = 600;
+
+        /// <summary>Collapses one press's burst of gesture events into one haptic.</summary>
+        /// <remarks>
+        /// A press arrives as two events milliseconds apart, and a wheel roll as
+        /// bursts of three or four. Firing on the first and ignoring the rest until
+        /// things go quiet gives one haptic per press without waiting to count -
+        /// waiting would add latency to the very thing being acknowledged.
+        /// </remarks>
+        private const Int64 GestureDebounceMs = 300;
+
+        private Int64 _lastDiagnosticScrollMs;
+        private Int64 _lastIsolatedGestureMs;
+
+        /// <summary>Turns an Options+ navigation gesture into a thumb-button haptic.</summary>
+        private IntPtr OnDiagnosticEvent(IntPtr proxy, UInt32 type, IntPtr @event, IntPtr userInfo)
+        {
+            try
+            {
+                if (type == EventTapDisabledByTimeout || type == EventTapDisabledByUserInput)
+                {
+                    CGEventTapEnable(this._diagnosticTap, true);
+                    return @event;
+                }
+
+                var now = Environment.TickCount64;
+
+                if (type == EventScrollWheel)
+                {
+                    this._lastDiagnosticScrollMs = now;
+                    return @event;
+                }
+
+                var isGesture =
+                    type is EventRotate or EventBeginGesture or EventEndGesture
+                        or EventGesture or EventMagnify or EventSwipe or EventSmartMagnify;
+
+                if (!isGesture)
+                {
+                    return @event;
+                }
+
+                // A gesture from real HARDWARE has no posting process. That is what
+                // a trackpad swipe looks like, and it is measured: swipes carried
+                // fieldid 45 and no source PID, while every thumb-button press
+                // carried source PID 1613 - Options+. Without this check a
+                // three-finger swipe would buzz the mouse.
+                if (CGEventGetIntegerValueField(@event, FieldEventSourceUnixProcessId) == 0)
+                {
+                    return @event;
+                }
+
+                // Scroll nearby means the thumb WHEEL, not a thumb button.
+                if ((now - this._lastDiagnosticScrollMs) < GestureScrollProximityMs)
+                {
+                    return @event;
+                }
+
+                // One haptic per burst.
+                if (this._lastIsolatedGestureMs != 0
+                    && (now - this._lastIsolatedGestureMs) < GestureDebounceMs)
+                {
+                    this._lastIsolatedGestureMs = now;
+                    return @event;
+                }
+
+                this._lastIsolatedGestureMs = now;
+
+                this.Fire(HapticEvents.MouseThumb, cooldownMs: 0);
+            }
+            catch (Exception ex)
+            {
+                PluginLog.Error($"[ThrumHaptics] gesture tap callback error: {ex.Message}");
+            }
+
+            return @event;
         }
 
         /// <summary>Reads kCFRunLoopCommonModes, an exported CFStringRef variable.</summary>
@@ -456,6 +773,10 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
                     case EventOtherMouseUp:
                     case EventOtherMouseDragged:
                         this.OnOtherMouse(type, @event);
+                        break;
+
+                    case EventMouseMoved:
+                        this.OnMouseMoved(@event);
                         break;
 
                     case EventScrollWheel:
@@ -579,56 +900,222 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
             this.Fire(DragEvents[button].Start, cooldownMs: 0);
         }
 
+        private void OnMouseMoved(IntPtr @event)
+        {
+            // Cheapest possible early-out: this runs on every pixel of cursor
+            // movement, so it must do nothing at all when the feature is off.
+            if (!this._settings.IsEnabled(HapticEvents.ScreenEdge))
+            {
+                return;
+            }
+
+            this.RefreshDisplays();
+
+            var p = CGEventGetLocation(@event);
+            var current = this.DisplayContaining(p.X, p.Y);
+
+            if (current == null)
+            {
+                return; // Cursor is nowhere we know about; nothing to compare to.
+            }
+
+            if (this.AtWall(current.Value, p, tolerance: 1))
+            {
+                if (!this._atScreenEdge)
+                {
+                    this._atScreenEdge = true;
+                    this.Fire(HapticEvents.ScreenEdge, cooldownMs: 0);
+                }
+
+                return;
+            }
+
+            // Re-arm only after a clear retreat, so resting against the edge does
+            // not machine-gun on sub-pixel jitter.
+            if (this._atScreenEdge && !this.AtWall(current.Value, p, ScreenEdgeReleasePx))
+            {
+                this._atScreenEdge = false;
+            }
+        }
+
+        /// <summary>
+        /// Whether the cursor is against an edge it genuinely cannot cross.
+        /// </summary>
+        /// <remarks>
+        /// The bounding box of all displays is the WRONG model, and a stacked
+        /// arrangement shows why. Put a wide external monitor above a narrower
+        /// laptop screen and the union is wider than either: while the cursor is on
+        /// the laptop it can never reach the union's left or right, because those
+        /// x-coordinates only exist on the display above. Only the top and bottom of
+        /// the union are ever touchable, which is exactly how it behaved.
+        ///
+        /// A union also cannot tell a wall from the seam between two monitors, where
+        /// the cursor passes straight through and a haptic would be wrong.
+        ///
+        /// So the question is asked per edge of the display the cursor is actually
+        /// on: is there another display just beyond it? If not, it is a wall.
+        /// </remarks>
+        private Boolean AtWall(CGRect d, CGPoint p, Double tolerance)
+        {
+            var right = d.Origin.X + d.Size.Width;
+            var bottom = d.Origin.Y + d.Size.Height;
+
+            // Probed from the DISPLAY's edge rather than the cursor, so the answer
+            // does not change as the cursor creeps within the tolerance band.
+            if (p.X <= d.Origin.X + tolerance
+                && this.DisplayContaining(d.Origin.X - EdgeProbePx, p.Y) == null)
+            {
+                return true;
+            }
+
+            if (p.X >= right - 1 - tolerance
+                && this.DisplayContaining(right + EdgeProbePx, p.Y) == null)
+            {
+                return true;
+            }
+
+            if (p.Y <= d.Origin.Y + tolerance
+                && this.DisplayContaining(p.X, d.Origin.Y - EdgeProbePx) == null)
+            {
+                return true;
+            }
+
+            return p.Y >= bottom - 1 - tolerance
+                && this.DisplayContaining(p.X, bottom + EdgeProbePx) == null;
+        }
+
+        private CGRect? DisplayContaining(Double x, Double y)
+        {
+            foreach (var d in this._displays)
+            {
+                if (x >= d.Origin.X && x < d.Origin.X + d.Size.Width
+                    && y >= d.Origin.Y && y < d.Origin.Y + d.Size.Height)
+                {
+                    return d;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>Refreshes the cached bounds of every active display.</summary>
+        private void RefreshDisplays()
+        {
+            var now = Environment.TickCount64;
+
+            if (this._displays.Length > 0 && (now - this._displaysReadMs) <= DisplaysTtlMs)
+            {
+                return;
+            }
+
+            this._displaysReadMs = now;
+
+            var ids = new UInt32[16];
+
+            if (CGGetActiveDisplayList((UInt32)ids.Length, ids, out var count) != 0 || count == 0)
+            {
+                return;
+            }
+
+            var bounds = new CGRect[count];
+
+            for (var i = 0; i < count; i++)
+            {
+                bounds[i] = CGDisplayBounds(ids[i]);
+            }
+
+            this._displays = bounds;
+        }
+
         private void OnScroll(IntPtr @event)
         {
+            // MOMENTUM first, before anything is counted or accumulated. These are
+            // inertial scrolling the OS continues AFTER the wheel has stopped, so a
+            // haptic there is feedback for input the user is no longer giving.
+            if (CGEventGetIntegerValueField(@event, FieldScrollWheelEventMomentumPhase) != 0)
+            {
+                return;
+            }
+
             var vertical = CGEventGetIntegerValueField(@event, FieldScrollWheelEventDeltaAxis1);
             var horizontal = CGEventGetIntegerValueField(@event, FieldScrollWheelEventDeltaAxis2);
+            var horizontalPoints = CGEventGetIntegerValueField(@event, FieldScrollWheelEventPointDeltaAxis2);
 
-            // MOST scroll events carry zero on both line axes. The MX Master's wheel
-            // reports at high resolution, so macOS emits a stream of sub-line events
-            // and only ticks the line counter once a full line accumulates. Those are
-            // not scrolls we can act on, and an earlier build logged hundreds of them
-            // per flick for nothing.
-            if (vertical == 0 && horizontal == 0)
-            {
-                return;
-            }
-
-            // MOMENTUM events are inertial scrolling the OS continues AFTER the
-            // wheel has stopped moving. A haptic there would be feedback for input
-            // the user is no longer providing, which is worse than no haptic at all.
-            var momentumPhase = CGEventGetIntegerValueField(@event, FieldScrollWheelEventMomentumPhase);
-
-            if (momentumPhase != 0)
-            {
-                return;
-            }
-
-            // NOTE the line delta is ACCELERATED by macOS: the same physical detent
-            // reports 1 line rolled slowly and 16 rolled fast, so it is a distance,
-            // never a detent count. That rules out the Windows approach of counting
-            // rotation units towards a fixed threshold - 1080 there means nothing
-            // here.
+            // The thumb wheel is paced by DISTANCE ROLLED, the same idea as
+            // ThumbWheelDetentUnits on Windows, and for the same reason: it has no
+            // physical detents, so the haptic is the only thing marking steps.
             //
-            // Worse, the wheel reports at HIGH RESOLUTION, so several events arrive
-            // per physical detent - which makes the ScrollCooldownMs floor the main
-            // thing pacing haptics rather than a rare safety net, and it fires
-            // faster than the detents you can feel under your finger. Everything
-            // below is logged to find a field that tracks physical movement.
-            PluginLog.Verbose(
-                $"[ThrumHaptics] scroll axis1={vertical} axis2={horizontal}"
-                + $" pt1={CGEventGetIntegerValueField(@event, FieldScrollWheelEventPointDeltaAxis1)}"
-                + $" pt2={CGEventGetIntegerValueField(@event, FieldScrollWheelEventPointDeltaAxis2)}"
-                + $" continuous={CGEventGetIntegerValueField(@event, FieldScrollWheelEventIsContinuous)}"
-                + $" phase={CGEventGetIntegerValueField(@event, FieldScrollWheelEventScrollPhase)}");
+            // It has to accumulate here, before the sub-line early-out below, or the
+            // pixels carried by sub-line events are thrown away. That was the actual
+            // cause of the thumb wheel feeling sparse: haptics could only fire when
+            // the LINE counter ticked, and the log shows those arriving 150-870ms
+            // apart - about 4.6 a second no matter how fast the wheel is rolled.
+            var thumbWheelStep = this.CooldownFor(HapticEvents.ScrollHorizontal, ThumbWheelPointsByDensity);
 
-            if (horizontal != 0)
+            this._thumbWheelPixels += Math.Abs(horizontalPoints);
+
+            var pixelStepReached = this._thumbWheelPixels >= thumbWheelStep;
+
+            // MOST events carry zero on both line axes - the wheel reports at high
+            // resolution and macOS only ticks the line counter once a full line
+            // accumulates. They are still worth counting, and now worth acting on
+            // when enough thumb-wheel travel has built up.
+            if (vertical == 0 && horizontal == 0 && !pixelStepReached)
             {
-                this.Fire(HapticEvents.ScrollHorizontal, ScrollCooldownMs);
+                this._scrollSubLineEvents++;
                 return;
             }
 
-            this.Fire(HapticEvents.ScrollVertical, ScrollCooldownMs);
+            // NOTE the line delta is ACCELERATED by macOS: the same wheel reports
+            // pt1 of about 3 rolled slowly and about 147 in a fast flick. It is a
+            // distance, never a detent count, which is why the VERTICAL wheel has no
+            // accumulator - there is nothing left to count that corresponds to a
+            // physical notch, and only a rate limit remains.
+            //
+            // Verbose: one line per scroll event would swamp an Info log. Raise it
+            // when tuning - `dt` is the gap since the last event that counted, `sub`
+            // how many sub-line events preceded it, `px` the thumb-wheel travel
+            // accumulator, and SUPPRESSED marks where the floor bound rather than
+            // the wheel.
+            var now = Environment.TickCount64;
+            var horizontalScroll = horizontal != 0 || pixelStepReached;
+
+            var eventId = horizontalScroll ? HapticEvents.ScrollHorizontal : HapticEvents.ScrollVertical;
+
+            var cooldown = horizontalScroll
+                ? this.CooldownFor(eventId, ThumbWheelCooldownByDensity)
+                : this.CooldownFor(eventId, ScrollCooldownByDensity);
+
+            var suppressed =
+                this._lastFiredMs.TryGetValue(eventId, out var lastFired)
+                && (now - lastFired) < cooldown;
+
+            PluginLog.Verbose(
+                $"[ThrumHaptics][scroll] dt={(this._lastScrollMs == 0 ? 0 : now - this._lastScrollMs)}"
+                + $" sub={this._scrollSubLineEvents}"
+                + $" axis1={vertical} axis2={horizontal}"
+                + $" pt1={CGEventGetIntegerValueField(@event, FieldScrollWheelEventPointDeltaAxis1)}"
+                + $" pt2={horizontalPoints} px={this._thumbWheelPixels}"
+                + $" cont={CGEventGetIntegerValueField(@event, FieldScrollWheelEventIsContinuous)}"
+                + $" phase={CGEventGetIntegerValueField(@event, FieldScrollWheelEventScrollPhase)}"
+                + $" -> {(suppressed ? "SUPPRESSED" : "fire")}");
+
+            this._lastScrollMs = now;
+            this._scrollSubLineEvents = 0;
+
+            // SUBTRACT rather than zero, so leftover travel carries into the next
+            // step. Zeroing loses distance on every tick and drifts slower than the
+            // thumb actually moved - the same reasoning as the Windows accumulator.
+            if (pixelStepReached)
+            {
+                this._thumbWheelPixels -= thumbWheelStep;
+            }
+            else if (horizontalScroll)
+            {
+                this._thumbWheelPixels = 0;
+            }
+
+            this.Fire(eventId, cooldown);
         }
 
         /// <summary>Plays an event's waveform, honouring its enable flag and rate limit.</summary>
@@ -679,6 +1166,11 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
                     CGEventTapEnable(this._tap, false);
                 }
 
+                if (this._diagnosticTap != IntPtr.Zero)
+                {
+                    CGEventTapEnable(this._diagnosticTap, false);
+                }
+
                 // Breaks CFRunLoopRun on the tap thread so it can exit.
                 if (this._runLoop != IntPtr.Zero)
                 {
@@ -703,6 +1195,21 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
                     CFMachPortInvalidate(this._tap);
                     CFRelease(this._tap);
                 }
+
+                // Same invalidate-then-release order as the primary tap, and for the
+                // same reason: releasing alone leaves the port registered and leaks
+                // a live tap on every plugin reload.
+                if (this._diagnosticRunLoopSource != IntPtr.Zero)
+                {
+                    CFRunLoopSourceInvalidate(this._diagnosticRunLoopSource);
+                    CFRelease(this._diagnosticRunLoopSource);
+                }
+
+                if (this._diagnosticTap != IntPtr.Zero)
+                {
+                    CFMachPortInvalidate(this._diagnosticTap);
+                    CFRelease(this._diagnosticTap);
+                }
             }
             catch (Exception ex)
             {
@@ -713,11 +1220,14 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
                 this._runLoopSource = IntPtr.Zero;
                 this._runLoop = IntPtr.Zero;
                 this._tap = IntPtr.Zero;
+                this._diagnosticRunLoopSource = IntPtr.Zero;
+                this._diagnosticTap = IntPtr.Zero;
                 this._thread = null;
 
                 // Released only after the run loop has stopped: CoreGraphics still
                 // holds the function pointer until then.
                 this._callback = null;
+                this._diagnosticCallback = null;
 
                 PluginLog.Info("[ThrumHaptics] macOS event tap stopped.");
             }

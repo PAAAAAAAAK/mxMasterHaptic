@@ -27,11 +27,12 @@ namespace ThrumHapticsSettings
     internal sealed class SettingsForm : Form
     {
         private readonly SettingsClient _client;
-        private readonly Dictionary<String, (Boolean Enabled, String Waveform)> _values;
+        private readonly Dictionary<String, (Boolean Enabled, String Waveform, Int32 Density)> _values;
 
         private const String ColAction = "action";
         private const String ColEnabled = "enabled";
         private const String ColWaveform = "waveform";
+        private const String ColDensity = "density";
         private const String ColTest = "test";
 
         /// <summary>A waveform as offered in the dropdown.</summary>
@@ -49,7 +50,7 @@ namespace ThrumHapticsSettings
 
         private readonly System.Threading.CancellationTokenSource _watchdog = new();
 
-        public SettingsForm(SettingsClient client, Dictionary<String, (Boolean, String)> values)
+        public SettingsForm(SettingsClient client, Dictionary<String, (Boolean, String, Int32)> values)
         {
             this._client = client;
             this._values = values;
@@ -106,7 +107,7 @@ namespace ThrumHapticsSettings
             base.OnFormClosing(e);
         }
 
-        private (Boolean Enabled, String Waveform) ValueFor(String eventId)
+        private (Boolean Enabled, String Waveform, Int32 Density) ValueFor(String eventId)
         {
             if (this._values.TryGetValue(eventId, out var value))
             {
@@ -115,17 +116,35 @@ namespace ThrumHapticsSettings
 
             var def = HapticEvents.Find(eventId);
 
-            return (def?.DefaultEnabled ?? false, def?.DefaultWaveform ?? Waveforms.SubtleCollision);
+            return (
+                def?.DefaultEnabled ?? false,
+                def?.DefaultWaveform ?? Waveforms.SubtleCollision,
+                HapticEvents.DefaultDensity);
         }
 
         private void BuildLayout()
         {
             this.Text = "Thrum Haptics - Settings";
             this.StartPosition = FormStartPosition.CenterScreen;
-            this.MinimumSize = new Size(560, 360);
+
+            // From the executable's own embedded icon rather than a separate file:
+            // nothing extra to ship, and it cannot go missing from the package.
+            try
+            {
+                this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            }
+            catch (Exception)
+            {
+                // Cosmetic. A window with the default icon is worth far less than a
+                // window that fails to open.
+            }
+            this.MinimumSize = new Size(680, 360);
             this.Font = new Font("Segoe UI", 9F);
 
-            const Int32 defaultWidth = 700;
+            // 840, up from 700, for the added spacing column. Columns are
+            // proportional here, so a narrow window shrinks every one of them
+            // rather than only the flexible one.
+            const Int32 defaultWidth = 840;
 
             this.ClientSize = new Size(defaultWidth, 560);
 
@@ -286,6 +305,18 @@ namespace ThrumHapticsSettings
                 ValueMember = nameof(WaveformItem.Value),
             });
 
+            // Density applies to the wheels only. The column exists on every grid so
+            // the layout stays aligned, and non-wheel rows leave the cell empty and
+            // read-only rather than offering a control that does nothing.
+            grid.Columns.Add(new DataGridViewComboBoxColumn
+            {
+                Name = ColDensity,
+                HeaderText = "Density",
+                FillWeight = 80,
+                FlatStyle = FlatStyle.Flat,
+                DisplayStyle = DataGridViewComboBoxDisplayStyle.ComboBox,
+            });
+
             grid.Columns.Add(new DataGridViewButtonColumn
             {
                 Name = ColTest,
@@ -317,7 +348,7 @@ namespace ThrumHapticsSettings
                 }
 
                 var current = this.ValueFor(def.Id);
-                var index = grid.Rows.Add(def.DisplayName, current.Enabled, null, "Test");
+                var index = grid.Rows.Add(def.DisplayName, current.Enabled, null, null, "Test");
                 var row = grid.Rows[index];
 
                 if (def.GroupKey != null && shadeGroup)
@@ -334,6 +365,23 @@ namespace ThrumHapticsSettings
                 cell.ValueMember = nameof(WaveformItem.Value);
                 cell.DataSource = BuildWaveformItems(def.Category);
                 cell.Value = current.Waveform;
+
+                var densityCell = (DataGridViewComboBoxCell)row.Cells[ColDensity];
+
+                if (def.HasDensity)
+                {
+                    densityCell.DataSource = HapticEvents.DensityLabels.ToList();
+                    densityCell.Value =
+                        HapticEvents.DensityLabels[HapticEvents.ClampDensity(current.Density) - 1];
+                }
+                else
+                {
+                    // An empty combo cell still paints a dropdown arrow, which reads
+                    // as a control that is simply broken. Displaying it as a flat
+                    // cell says "not applicable here" instead.
+                    densityCell.DisplayStyle = DataGridViewComboBoxDisplayStyle.Nothing;
+                    densityCell.ReadOnly = true;
+                }
             }
 
             UpdateRowStates(grid);
@@ -399,6 +447,15 @@ namespace ThrumHapticsSettings
                 row.Cells[ColWaveform].ReadOnly = !isEnabled;
                 row.Cells[ColWaveform].Style.ForeColor =
                     isEnabled ? SystemColors.ControlText : SystemColors.GrayText;
+
+                // Left alone where it was never populated: making an empty cell
+                // editable would hand the user a dropdown with nothing in it.
+                if (row.Cells[ColDensity] is DataGridViewComboBoxCell { DataSource: not null } densityCell)
+                {
+                    densityCell.ReadOnly = !isEnabled;
+                    densityCell.Style.ForeColor =
+                        isEnabled ? SystemColors.ControlText : SystemColors.GrayText;
+                }
             }
         }
 
@@ -444,11 +501,18 @@ namespace ThrumHapticsSettings
                 return;
             }
 
-            this._values[eventId] = (isEnabled, waveform);
+            // Read back by label rather than kept as an index, so the stored level
+            // stays correct if the cell was never populated.
+            var densityLabel = row.Cells[ColDensity].Value as String;
+            var densityIndex = Array.IndexOf(HapticEvents.DensityLabels, densityLabel);
+
+            var density = densityIndex >= 0 ? densityIndex + 1 : HapticEvents.DefaultDensity;
+
+            this._values[eventId] = (isEnabled, waveform, density);
 
             try
             {
-                this._client.Set(eventId, isEnabled, waveform);
+                this._client.Set(eventId, isEnabled, waveform, density);
             }
             catch (Exception)
             {

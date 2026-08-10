@@ -95,6 +95,13 @@ namespace Loupedeck.ThrumHapticsPlugin
                     startInfo.RedirectStandardError = true;
                 }
 
+                // Started BEFORE Process.Start so the settings app's own "entered
+                // Main at 0ms" can be placed on this clock. The gap between them is
+                // the pre-main cost - .NET host startup, which is precisely the part
+                // ReadyToRun would address and the part the app cannot measure from
+                // inside itself.
+                var launchClock = System.Diagnostics.Stopwatch.StartNew();
+
                 var process = System.Diagnostics.Process.Start(startInfo);
 
                 if (OperatingSystem.IsMacOS() && process != null)
@@ -103,7 +110,8 @@ namespace Loupedeck.ThrumHapticsPlugin
                     {
                         if (!String.IsNullOrWhiteSpace(e.Data))
                         {
-                            PluginLog.Info($"[ThrumHaptics] settings-app stdout: {e.Data}");
+                            PluginLog.Info(
+                                $"[ThrumHaptics] settings-app stdout (+{launchClock.ElapsedMilliseconds}ms): {e.Data}");
                         }
                     };
 

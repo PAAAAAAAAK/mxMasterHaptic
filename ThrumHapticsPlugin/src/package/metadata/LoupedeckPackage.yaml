@@ -13,13 +13,16 @@ name: ThrumHaptics
 displayName: Thrum Haptics
 
 # Short description of the plugin.
-description: Universal haptic feedback for the MX Master 4 - clicks, scroll and more, in every application.
+description: Universal haptic feedback - clicks, scroll and gestures, in every application.
 
 # Name of the plugin library file.
 pluginFileName: ThrumHapticsPlugin.dll
 
 # Plugin version.
-version: 1.1.0
+#
+# 1.2.0 follows the published 1.1.0. The 1.2.x and 1.3.x numbers that appear in
+# this branch's history were local test builds and were never released.
+version: 1.2.0
 
 # Author of the plugin. The author can be a company or an individual developer.
 author: PAAAAAAAAK
@@ -38,7 +41,18 @@ pluginFolderWin: bin
 
 # Location of plugin files on macOS (relative to the plugin base directory).
 # This parameter is required to support Mac.
-#pluginFolderMac: bin
+#
+# A separate folder from pluginFolderWin, unlike Logitech's own plugins which
+# point both at the same place. They can share because they are pure managed
+# code; ours cannot. Windows ships uiohook.dll and a WinForms executable, macOS
+# ships Avalonia and its Skia renderer, and neither has any business on the other
+# platform. The Plugin Service loads only the folder matching the running OS.
+#
+# 'bin' HERE, rewritten to 'bin/mac' by tools/pack-release.ps1. The plain value
+# is what a macOS-only build needs, since that tree has its own bin; the release
+# package nests macOS under the Windows one, and the script does that rewrite so
+# both layouts stay buildable from the same manifest.
+pluginFolderMac: bin
 
 # List of devices the plugin is optimized for.
 supportedDevices:

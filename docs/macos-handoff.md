@@ -1,18 +1,26 @@
-# macOS port — handoff
+# macOS — technical reference
 
-Working document for continuing the macOS port **on a Mac**. The Windows side of
-this work was done cross-compiling from a Windows machine, which could build and
-package but never run or debug. That is the limitation this handoff exists to
-lift.
+**The port is done and shipped in 1.2.0.** This was the handoff document written
+to continue the work on a Mac; it is kept as a reference because the measurements
+in it were expensive to obtain and are not recoverable from the code.
 
-Read this, then read `git log` on this branch. The commit messages carry the
-reasoning behind every decision, not just the changes — they are the real
-documentation and are worth reading in full before changing anything.
+Read this, then read `git log`. The commit messages carry the reasoning behind
+every decision, not just the changes.
 
-**Updated 2026-08-10, first session actually on the Mac.** The two verifications
-this document used to open with are answered (facts 6–8), the thumb buttons are
-closed rather than open, and two decisions were taken that change the plan — see
-*Decisions taken on the Mac*. No code has changed yet.
+**Read fact 6 with its correction.** It concluded the thumb buttons were closed,
+and that conclusion was too broad — the presses genuinely never arrive, but every
+observation point in that table looked for a mouse *button* and none looked for
+what Options+ sends in their place. That turned out to be an NSEvent gesture,
+which is detectable, and it ships. The table is still correct about what it
+measured. It was the inference that overreached.
+
+Two things below are also superseded by the shipped implementation:
+
+- **Screen edge** is implemented, per display rather than by bounding box.
+- **Scroll pacing** is a user setting now, not a constant. The line delta is
+  accelerated beyond recovery — the same wheel reports ~3 points rolled slowly
+  and ~147 in a flick — so physical detents cannot be reconstructed at all, and
+  the honest answer was to let the user choose the spacing.
 
 ---
 
@@ -164,15 +172,31 @@ returns `kIOReturnSuccess` **alongside a running Options+** — so the device is
 The two verifications this document used to open with are **answered** — see
 established facts 6, 7 and 8. What follows is what remains.
 
-### 1. Back / forward — CLOSED, not deferred
+### 1. Back / forward — SOLVED, via the substitute rather than the press
 
-Unreachable by every available means. See fact 6 for the evidence table. The
-decision taken is to **remove `mouse.back` and `mouse.forward` from the macOS
-catalogue entirely** rather than ship two settings rows that can never fire.
-The ids stay in the catalogue for Windows, where they work — a rename or
-deletion there would orphan saved preferences.
+The presses are unreachable exactly as fact 6 measured. What that table missed is
+that it only ever asked "is there a button?", and the answer to "what arrives
+instead?" is different.
 
-Reopening this needs *new information*, not another attempt at the same APIs.
+Options+ posts an **NSEvent gesture (CGEventType 29)** in their place. Ten
+presses produced ten isolated pairs of them, at the right times, with no scroll
+anywhere near. A session-level tap sees them; the HID-level tap does not, because
+it sits upstream of where Options+ injects.
+
+What separates them from everything else that emits type 29:
+
+- **Trackpad swipes** carry no source PID — they come from hardware. The thumb
+  buttons carry Options+'s PID, because Options+ posted them. Clean and reliable.
+- **The thumb wheel** carries the same PID and cannot be separated that way. Only
+  timing distinguishes it: a wheel roll has scroll events around its gestures, a
+  button press had none within eighteen seconds.
+
+Back and forward are **indistinguishable from each other** — same PID, same
+fields, every time — so macOS gets one combined `mouse.thumb` event rather than
+two. It ships off by default, because the second filter is a heuristic.
+
+The lesson worth keeping: "unreachable" was true of the mechanism and false of
+the outcome, and the table's authority made the overreach hard to see.
 
 ### 2. IOHIDManager — half the prize is real, and it is the half nobody has
 

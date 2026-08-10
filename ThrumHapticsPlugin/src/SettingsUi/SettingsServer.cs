@@ -141,7 +141,9 @@ namespace Loupedeck.ThrumHapticsPlugin.SettingsUi
                         foreach (var def in HapticEvents.ForCurrentPlatform)
                         {
                             await writer.WriteLineAsync(
-                                $"{def.Id}|{this._settings.IsEnabled(def.Id)}|{this._settings.WaveformFor(def.Id)}")
+                                $"{def.Id}|{this._settings.IsEnabled(def.Id)}"
+                                + $"|{this._settings.WaveformFor(def.Id)}"
+                                + $"|{this._settings.DensityFor(def.Id)}")
                                 .ConfigureAwait(false);
                         }
 
@@ -151,6 +153,15 @@ namespace Loupedeck.ThrumHapticsPlugin.SettingsUi
                     case "SET" when parts.Length >= 4:
                         this._settings.SetEnabled(parts[1], Boolean.TryParse(parts[2], out var on) && on);
                         this._settings.SetWaveform(parts[1], parts[3]);
+
+                        // Optional field: both ends ship in the same package so they
+                        // always match, but a SET without it must still mean "leave
+                        // the density alone" rather than "reset it".
+                        if (parts.Length >= 5 && Int32.TryParse(parts[4], out var density))
+                        {
+                            this._settings.SetDensity(parts[1], density);
+                        }
+
                         await writer.WriteLineAsync("OK").ConfigureAwait(false);
                         break;
 

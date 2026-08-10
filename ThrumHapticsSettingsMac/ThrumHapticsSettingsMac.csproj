@@ -18,6 +18,22 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
 
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+
+    <!-- ReadyToRun was TRIED HERE AND REMOVED. Do not add it back without new
+         evidence; it is the obvious fix and it does not work.
+
+         The first startup log pointed straight at JIT: 791ms before managed code
+         ran at all, then 1250ms inside Avalonia initialisation - 76% of a 2.67s
+         launch. R2R precompiles exactly that, so it should have been most of it.
+
+         It bought 5%. Window-shown went 2671ms -> 2534ms, and time-to-Main got
+         WORSE (791 -> 863ms), which puts the difference at noise. The bill was
+         4MB of package, paid by Windows users too now that we ship dual.
+
+         So the cost is not JIT. It is Avalonia's own startup - Skia, fonts,
+         display setup - which no compiler switch removes. Attacking it means a
+         lighter theme or a pre-warmed process. -->
+    <PublishDir>$(MSBuildThisFileDirectory)bin\$(Configuration)\publish\</PublishDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -34,6 +50,14 @@
          than copied. It has no UI in it and the protocol is identical, so a
          second copy would only be somewhere for the two to drift apart. -->
     <Compile Include="..\ThrumHapticsSettings\SettingsClient.cs" Link="Shared\SettingsClient.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The SAME file the package uses as its Marketplace icon, linked rather than
+         copied, so the Dock tile and the store listing cannot drift apart. A bare
+         executable has no bundle for macOS to read an icon from, so this is loaded
+         at runtime - see MacDockIcon. -->
+    <None Include="..\assets\ThrumHaptics.png" Link="AppIcon.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

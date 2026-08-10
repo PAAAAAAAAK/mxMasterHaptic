@@ -41,7 +41,7 @@ namespace ThrumHapticsSettingsMac
     internal sealed class SettingsWindow : Window
     {
         private readonly SettingsClient _client;
-        private readonly Dictionary<String, (Boolean Enabled, String Waveform)> _values;
+        private readonly Dictionary<String, (Boolean Enabled, String Waveform, Int32 Density)> _values;
         private readonly System.Threading.CancellationTokenSource _watchdog = new();
 
         /// <summary>A waveform as offered in the dropdown.</summary>
@@ -59,7 +59,7 @@ namespace ThrumHapticsSettingsMac
             public override String ToString() => this.Display;
         }
 
-        public SettingsWindow(SettingsClient client, Dictionary<String, (Boolean, String)> values)
+        public SettingsWindow(SettingsClient client, Dictionary<String, (Boolean, String, Int32)> values)
         {
             this._client = client;
             this._values = values;
@@ -68,7 +68,7 @@ namespace ThrumHapticsSettingsMac
             this.StartPluginWatchdog();
         }
 
-        private (Boolean Enabled, String Waveform) ValueFor(String eventId)
+        private (Boolean Enabled, String Waveform, Int32 Density) ValueFor(String eventId)
         {
             if (this._values.TryGetValue(eventId, out var value))
             {
@@ -77,20 +77,49 @@ namespace ThrumHapticsSettingsMac
 
             var def = HapticEvents.Find(eventId);
 
-            return (def?.DefaultEnabled ?? false, def?.DefaultWaveform ?? Waveforms.SubtleCollision);
+            return (
+                def?.DefaultEnabled ?? false,
+                def?.DefaultWaveform ?? Waveforms.SubtleCollision,
+                HapticEvents.DefaultDensity);
         }
 
         private void BuildLayout()
         {
             this.Title = "Thrum Haptics - Settings";
-            this.Width = 700;
-            this.MinWidth = 560;
+
+            // The window's own icon, separate from the Dock tile MacDockIcon sets:
+            // this is what Mission Control and the window menu use.
+            try
+            {
+                var icon = MacDockIcon.IconPath;
+
+                if (icon != null)
+                {
+                    this.Icon = new WindowIcon(icon);
+                }
+            }
+            catch (Exception)
+            {
+                // Cosmetic only; never worth failing to open the window.
+            }
+
+            // 840, up from 700, to make room for the spacing column. The label
+            // column is the one that flexes, so a window too narrow squeezes the
+            // action names rather than the controls.
+            this.Width = 840;
+            this.MinWidth = 680;
             this.MinHeight = 360;
             this.WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
             var root = new DockPanel { LastChildFill = true };
 
-            root.Children.Add(Header());
+            // Dock MUST be set explicitly. A DockPanel child with no Dock docks
+            // LEFT, not top - so without this the header claimed a column as wide
+            // as its longest line and squeezed every setting into what was left,
+            // which looked like a width problem rather than a layout one.
+            var header = Header();
+            DockPanel.SetDock(header, Dock.Top);
+            root.Children.Add(header);
 
             var footer = this.Footer();
             DockPanel.SetDock(footer, Dock.Bottom);
@@ -140,13 +169,23 @@ namespace ThrumHapticsSettingsMac
 
             this.Content = root;
 
-            // Height is derived from the content rather than guessed, then capped,
-            // so the list is fully visible on a large display without ever
-            // exceeding a small one.
+            // Height follows the content, capped so a long list never opens taller
+            // than a laptop display. Measured against the real window rather than
+            // guessed: a row occupies about 46pt on macOS, not the 34 first assumed
+            // from Windows, which left the last section cut off on opening.
+            //
+            // The cap is a fallback, not the intent - the ScrollViewer handles
+            // anything that does not fit, and the window is resizable.
             var rows = HapticEvents.ForCurrentPlatform.Length;
-            var wanted = 190 + (rows * 34) + (sections.Length * 34);
+            var wanted = 210 + (rows * 46) + (sections.Length * 42);
 
-            this.Height = Math.Min(wanted, 780);
+            var workingHeight = this.Screens?.Primary?.WorkingArea.Height;
+
+            // Screens is null until the window has a handle on some backends, so
+            // fall back to a conservative fixed cap rather than assuming.
+            var cap = workingHeight is > 0 ? (Int32)(workingHeight.Value * 0.85) : 820;
+
+            this.Height = Math.Min(wanted, cap);
         }
 
         private static Control Header() => new StackPanel
@@ -244,6 +283,18 @@ namespace ThrumHapticsSettingsMac
             waveform.SelectedItem = ((IEnumerable<WaveformItem>)waveform.ItemsSource)
                 .FirstOrDefault(i => String.Equals(i.Value, current.Waveform, StringComparison.OrdinalIgnoreCase));
 
+            // Only the wheels get a density control. Everything else keeps an empty
+            // cell of the same width so the columns still line up down the list.
+            var density = new ComboBox
+            {
+                ItemsSource = HapticEvents.DensityLabels,
+                SelectedIndex = HapticEvents.ClampDensity(current.Density) - 1,
+                Width = 120,
+                VerticalAlignment = VerticalAlignment.Center,
+                IsEnabled = current.Enabled,
+                IsVisible = def.HasDensity,
+            };
+
             var test = new Button { Content = "Test", MinWidth = 64, VerticalAlignment = VerticalAlignment.Center };
 
             var label = new TextBlock
@@ -261,8 +312,10 @@ namespace ThrumHapticsSettingsMac
             {
                 var on = enabled.IsChecked == true;
                 waveform.IsEnabled = on;
+                density.IsEnabled = on;
 
-                this.Apply(def.Id, on, (waveform.SelectedItem as WaveformItem)?.Value, preview: on);
+                this.Apply(def.Id, on, (waveform.SelectedItem as WaveformItem)?.Value, density.SelectedIndex + 1,
+                    preview: on);
             };
 
             waveform.SelectionChanged += (_, _) =>
@@ -270,27 +323,42 @@ namespace ThrumHapticsSettingsMac
                     def.Id,
                     enabled.IsChecked == true,
                     (waveform.SelectedItem as WaveformItem)?.Value,
+                    density.SelectedIndex + 1,
                     preview: enabled.IsChecked == true);
+
+            // No preview on a density change: spacing is not something a single
+            // waveform can demonstrate, so playing one would say nothing about what
+            // just changed. It is felt by scrolling.
+            density.SelectionChanged += (_, _) =>
+                this.Apply(
+                    def.Id,
+                    enabled.IsChecked == true,
+                    (waveform.SelectedItem as WaveformItem)?.Value,
+                    density.SelectedIndex + 1,
+                    preview: false);
 
             test.Click += (_, _) => this.TryPlay((waveform.SelectedItem as WaveformItem)?.Value);
 
             var grid = new Grid
             {
                 Margin = new Thickness(10, 6, 10, 6),
-                ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"),
+                ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto,Auto"),
             };
 
             Grid.SetColumn(label, 0);
             Grid.SetColumn(enabled, 1);
             Grid.SetColumn(waveform, 2);
-            Grid.SetColumn(test, 3);
+            Grid.SetColumn(density, 3);
+            Grid.SetColumn(test, 4);
 
             enabled.Margin = new Thickness(8, 0, 12, 0);
             waveform.Margin = new Thickness(0, 0, 8, 0);
+            density.Margin = new Thickness(0, 0, 8, 0);
 
             grid.Children.Add(label);
             grid.Children.Add(enabled);
             grid.Children.Add(waveform);
+            grid.Children.Add(density);
             grid.Children.Add(test);
 
             return new Border
@@ -303,18 +371,18 @@ namespace ThrumHapticsSettingsMac
             };
         }
 
-        private void Apply(String eventId, Boolean isEnabled, String waveform, Boolean preview)
+        private void Apply(String eventId, Boolean isEnabled, String waveform, Int32 density, Boolean preview)
         {
             if (String.IsNullOrEmpty(waveform))
             {
                 return;
             }
 
-            this._values[eventId] = (isEnabled, waveform);
+            this._values[eventId] = (isEnabled, waveform, density);
 
             try
             {
-                this._client.Set(eventId, isEnabled, waveform);
+                this._client.Set(eventId, isEnabled, waveform, density);
             }
             catch (Exception)
             {

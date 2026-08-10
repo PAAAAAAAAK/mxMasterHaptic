@@ -24,6 +24,7 @@ namespace Loupedeck.ThrumHapticsPlugin.Config
         private readonly Plugin _plugin;
         private readonly Dictionary<String, Boolean> _enabled = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<String, String> _waveforms = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<String, Int32> _density = new(StringComparer.OrdinalIgnoreCase);
 
         public HapticSettings(Plugin plugin)
         {
@@ -34,6 +35,8 @@ namespace Loupedeck.ThrumHapticsPlugin.Config
         private static String EnabledKey(String eventId) => $"event.{eventId}.enabled";
 
         private static String WaveformKey(String eventId) => $"event.{eventId}.waveform";
+
+        private static String DensityKey(String eventId) => $"event.{eventId}.density";
 
         /// <summary>Reads every known event's settings into the in-memory cache.</summary>
         public void Reload()
@@ -54,6 +57,15 @@ namespace Loupedeck.ThrumHapticsPlugin.Config
                     && Array.IndexOf(Waveforms.All, rawWaveform) >= 0
                         ? rawWaveform
                         : def.DefaultWaveform;
+
+                // Clamped rather than trusted. This lands in a divisor and a rate
+                // limit on the input path, where an out-of-range value would either
+                // silence the event or ask the motor for more than it can play.
+                this._density[def.Id] =
+                    this._plugin.TryGetPluginSetting(DensityKey(def.Id), out var rawDensity)
+                    && Int32.TryParse(rawDensity, out var level)
+                        ? HapticEvents.ClampDensity(level)
+                        : HapticEvents.DefaultDensity;
             }
         }
 
@@ -68,6 +80,30 @@ namespace Loupedeck.ThrumHapticsPlugin.Config
             }
 
             return HapticEvents.Find(eventId)?.DefaultWaveform ?? Waveforms.SubtleCollision;
+        }
+
+        /// <summary>Spacing level for a wheel event, 1 (sparsest) to 5 (densest).</summary>
+        public Int32 DensityFor(String eventId) =>
+            eventId != null && this._density.TryGetValue(eventId, out var value)
+                ? value
+                : HapticEvents.DefaultDensity;
+
+        public void SetDensity(String eventId, Int32 level)
+        {
+            var def = HapticEvents.Find(eventId);
+
+            // Silently ignored for events without a density rather than stored and
+            // never read: a value that exists but does nothing is worse than none.
+            if (def == null || !def.HasDensity)
+            {
+                return;
+            }
+
+            var clamped = HapticEvents.ClampDensity(level);
+
+            this._density[eventId] = clamped;
+            this._plugin.SetPluginSetting(DensityKey(eventId), clamped.ToString());
+            PluginLog.Info($"[ThrumHaptics] {eventId} density -> {clamped}.");
         }
 
         public void SetEnabled(String eventId, Boolean enabled)
