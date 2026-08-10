@@ -106,6 +106,25 @@
                            Exclude="$(MSBuildThisFileDirectory)..\..\MxHapticsSettingsMac\bin\$(Configuration)\**\*.pdb" />
     </ItemGroup>
     <Copy SourceFiles="@(MacSettingsAppFiles)" DestinationFolder="$(OutputPath)%(RecursiveDir)" />
+
+    <!-- Avalonia.Desktop is a meta-package that drags in EVERY windowing backend,
+         so a macOS-only build ships Win32, X11 and D-Bus assemblies it can never
+         load. UsePlatformDetect picks the backend for the running OS, so the
+         others are simply absent rather than missed. Worth doing: this package
+         is already ~28MB against 390KB on Windows, and dead platform code is the
+         cheapest of that to give back. -->
+    <ItemGroup>
+      <ForeignBackend Include="$(OutputPath)Avalonia.Win32.dll" />
+      <ForeignBackend Include="$(OutputPath)Avalonia.Win32.Automation.dll" />
+      <ForeignBackend Include="$(OutputPath)Avalonia.X11.dll" />
+      <ForeignBackend Include="$(OutputPath)Avalonia.FreeDesktop.dll" />
+      <ForeignBackend Include="$(OutputPath)Avalonia.FreeDesktop.AtSpi.dll" />
+      <ForeignBackend Include="$(OutputPath)Tmds.DBus.Protocol.dll" />
+      <ForeignBackend Include="$(OutputPath)Avalonia.DesignerSupport.dll" />
+      <ForeignBackend Include="$(OutputPath)av_libglesv2.dll" />
+    </ItemGroup>
+    <Delete Files="@(ForeignBackend)" />
+
     <Message Text="🍎 macOS settings application copied into plugin output" Importance="High" />
   </Target>
 

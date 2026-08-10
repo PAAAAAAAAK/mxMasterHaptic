@@ -29,6 +29,20 @@
          catalogue would drift the first time an event is added. -->
     <Compile Include="..\MxHapticsPlugin\src\Config\HapticEvents.cs" Link="Shared\HapticEvents.cs" />
     <Compile Include="..\MxHapticsPlugin\src\Haptics\Waveforms.cs" Link="Shared\Waveforms.cs" />
+
+    <!-- The pipe client is shared with the Windows settings application rather
+         than copied. It has no UI in it and the protocol is identical, so a
+         second copy would only be somewhere for the two to drift apart. -->
+    <Compile Include="..\MxHapticsSettings\SettingsClient.cs" Link="Shared\SettingsClient.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Pinned, not floating. `dotnet add package` writes Version="*", which would
+         quietly change the UI framework underneath a build we cannot test from
+         Windows - the one place a surprise is most expensive here. -->
+    <PackageReference Include="Avalonia" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
   </ItemGroup>
 
 </Project>
