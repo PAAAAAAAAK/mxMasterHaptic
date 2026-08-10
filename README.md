@@ -127,13 +127,21 @@ output, writes a `.link` file into the Plugin Service's plugin directory and ask
 it to reload — so the plugin runs straight from your build output. Use
 `dotnet watch build` from `src/` while iterating.
 
-To package a release:
+To package a release, **delete the output directory first**:
 
 ```
+rm -r ./ThrumHapticsPlugin/bin
 dotnet build ThrumHapticsPlugin/src -c Release
-logiplugintool pack ./ThrumHapticsPlugin/bin/Release ./dist/ThrumHaptics_1.0.lplug4
-logiplugintool verify ./dist/ThrumHaptics_1.0.lplug4
+logiplugintool pack ./ThrumHapticsPlugin/bin/Release ./dist/ThrumHaptics_1.1.0.lplug4
+logiplugintool verify ./dist/ThrumHaptics_1.1.0.lplug4
 ```
+
+That first line is not superstition. A build only ever *adds* to the output
+directory — it never removes a file whose source has gone — and `pack` ships
+whatever it finds there. Rename or delete a project and the previous build's
+assemblies stay behind and get packaged alongside the new ones. It is invisible
+in the build log and `verify` passes happily, because the package is structurally
+fine; it just contains files it should not.
 
 ### Project layout
 
