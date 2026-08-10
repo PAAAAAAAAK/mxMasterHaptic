@@ -13,13 +13,13 @@ name: ThrumHaptics
 displayName: Thrum Haptics
 
 # Short description of the plugin.
-description: Universal haptic feedback for the MX Master 4 - clicks, scroll and more, in every application.
+description: Universal haptic feedback - clicks, scroll and gestures, in every application.
 
 # Name of the plugin library file.
 pluginFileName: ThrumHapticsPlugin.dll
 
 # Plugin version.
-version: 1.2.2
+version: 1.2.5
 
 # Author of the plugin. The author can be a company or an individual developer.
 author: PAAAAAAAAK
