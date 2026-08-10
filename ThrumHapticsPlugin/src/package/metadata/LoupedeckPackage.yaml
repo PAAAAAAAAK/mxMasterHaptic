@@ -1,4 +1,4 @@
-﻿# ==================================================================================================
+# ==================================================================================================
 # GENERAL SETTINGS
 # ==================================================================================================
 
@@ -19,7 +19,7 @@ description: Universal haptic feedback for the MX Master 4 - clicks, scroll and 
 pluginFileName: ThrumHapticsPlugin.dll
 
 # Plugin version.
-version: 1.2.1
+version: 1.2.2
 
 # Author of the plugin. The author can be a company or an individual developer.
 author: PAAAAAAAAK
