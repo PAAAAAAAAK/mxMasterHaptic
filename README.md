@@ -9,15 +9,19 @@ actually do with a mouse, everywhere you do them.
 - **Universal.** Responds to real mouse input, so it works in every application —
   your editor, your browser, your file manager, a game. Nothing to configure
   per-app.
+- **Windows and macOS.** One package, both platforms — the same waveforms, the
+  same settings, whichever machine you are on.
 - **One install.** Download, double-click, done. The settings window ships inside
   the plugin — nothing else to fetch, nothing to sign into.
 - **Yours to tune.** Every input can be switched off or given a different
-  waveform, with a live preview so you choose by feel rather than by name.
+  waveform, with a live preview so you choose by feel rather than by name, and
+  the wheels let you set how closely their ticks are spaced.
 
 ### ⬇ [Download Thrum Haptics](https://github.com/PAAAAAAAAK/thrum-haptics/releases)
 
 Grab the latest `.lplug4`, double-click it, then **confirm the prompt in Logi
-Options+**. Needs an MX Master 4, Logi Options+, and Windows x64.
+Options+**. Needs an MX Master 4, Logi Options+, and Windows x64 or Apple
+Silicon macOS.
 
 <p align="center">
   <img src="docs/settings-window.png" alt="Thrum Haptics settings window" width="520">
@@ -25,21 +29,24 @@ Options+**. Needs an MX Master 4, Logi Options+, and Windows x64.
 
 ## What it does
 
-| Input | Default | On by default |
-|---|---|---|
-| Left click | `subtle_collision` | ✅ |
-| Right click | `damp_collision` | ✅ |
-| Middle click | `sharp_collision` | ✅ |
-| Back (thumb) | `sharp_collision` | ✅ |
-| Forward (thumb) | `sharp_collision` | ✅ |
-| Scroll wheel | `subtle_collision` | ✅ |
-| Thumb wheel | `sharp_collision` | ✅ |
-| Drag start / end — left | `sharp_state_change` / `damp_state_change` | ✅ |
-| Drag start / end — middle | as above | ✗ |
-| Drag start / end — right | as above | ✗ |
-| Screen edge | `subtle_collision` | ✗ |
+| Input | Default | On by default | Platform |
+|---|---|---|---|
+| Left click | `subtle_collision` | ✅ | both |
+| Right click | `damp_collision` | ✅ | both |
+| Middle click | `sharp_collision` | ✅ | both |
+| Back (thumb) | `sharp_collision` | ✅ | Windows |
+| Forward (thumb) | `sharp_collision` | ✅ | Windows |
+| Thumb button (back / forward) | `sharp_collision` | ✗ | macOS |
+| Scroll wheel | `subtle_collision` | ✅ | both |
+| Thumb wheel | `sharp_collision` | ✅ | both |
+| Drag start / end — left | `sharp_state_change` / `damp_state_change` | ✅ | both |
+| Drag start / end — middle | as above | ✗ | both |
+| Drag start / end — right | as above | ✗ | both |
+| Screen edge | `subtle_collision` | ✗ | both |
 
-Every entry can be switched off or given a different waveform.
+Every entry can be switched off or given a different waveform. The settings
+window only lists what the machine you are on can actually deliver, so you never
+see a switch wired to nothing.
 
 Middle and right drag are off by default because in CAD and 3D tools those are
 the orbit and pan gestures — held down and moved constantly — so haptics there
@@ -52,9 +59,38 @@ The vertical wheel has physical detents, so in ratchet mode the hardware paces
 the haptics for us. The thumb wheel has none — it rolls smoothly — so pacing it
 by time gives a constant buzz no matter how fast you roll it.
 
-It's paced by **distance** instead: rotation accumulates and a tick fires once
-per notch-equivalent. Roll slowly, ticks come slowly; roll fast, they come fast.
-The haptic supplies the detents the hardware doesn't have.
+It's paced by **distance** instead: travel accumulates and a tick fires once per
+notch-equivalent. Roll slowly, ticks come slowly; roll fast, they come fast. The
+haptic supplies the detents the hardware doesn't have.
+
+### Density
+
+Both wheels have a **Density** setting — Sparse, Light, Standard, Dense, Very
+dense — controlling how closely their ticks are spaced.
+
+It's a setting rather than a constant because there is no right answer to find.
+The spacing was tuned by feel four times across two platforms and landed
+somewhere different each time; how dense a wheel should feel is a preference, not
+a fact. Standard is a starting point, not a verdict.
+
+At the dense end the limit is the motor: asked to start a waveform before the
+last one has finished, it stops producing distinct taps and becomes one
+continuous buzz. *Very dense* sits deliberately at that edge.
+
+### Thumb buttons on macOS
+
+On Windows, back and forward arrive as ordinary mouse buttons and get a row each.
+
+macOS never delivers them. Options+ converts the presses before they reach the
+input system — measured at four observation points, down to raw HID reports, all
+absent — and sends a navigation gesture instead. That gesture *is* detectable, so
+macOS gets a single combined **Thumb button** row: it can tell that a thumb button
+was pressed, but not which one.
+
+It ships **off by default**. Telling that gesture apart from a thumb-wheel roll
+relies on timing rather than on anything the event carries, so starting a roll
+after a pause can occasionally produce one extra tick. That's a fair trade if you
+want the feedback, and not one to impose if you don't.
 
 ## Installing
 
@@ -80,7 +116,12 @@ To uninstall, right-click the same `.lplug4` and choose **Uninstall Plugin**.
 
 - Logitech **MX Master 4** — the only Logitech mouse with a controllable haptic motor
 - **Logi Options+** (installs the Logi Plugin Service)
-- Windows x64
+- **Windows x64**, or **macOS on Apple Silicon**
+
+On macOS the haptics need Accessibility permission — but it attaches to
+LogiPluginService, which Options+ already holds, so there is normally nothing for
+you to grant. If nothing buzzes, check System Settings → Privacy & Security →
+**Accessibility** and confirm LogiPluginService is enabled there.
 
 ## Settings
 
@@ -88,10 +129,14 @@ Bind the **Haptic Settings** action (Options+ → *All Actions → Thrum Haptics
 Haptics*) to a key or an Actions Ring slot. Pressing it opens the settings
 window.
 
-Each row is one input: switch it off, or give it a different waveform. Waveforms
-are labelled by character — `short`, `medium`, `long` — and selecting one plays
-it immediately, so you tune by feel rather than by name. Changes save as you make
-them; there's no Save button.
+Each row is one input: switch it off, give it a different waveform, and for the
+two wheels set how densely its ticks are spaced. Waveforms are labelled by
+character — `short`, `medium`, `long` — and selecting one plays it immediately,
+so you tune by feel rather than by name. Changes save as you make them; there's
+no Save button.
+
+Density changes don't preview: one waveform can't demonstrate spacing, so
+playing it would say nothing about what just changed. You feel that by scrolling.
 
 Clicks and scroll offer only the short waveforms. A long waveform there outlasts
 the action that triggered it and the motor is still running when the next click
@@ -106,10 +151,12 @@ motor hits in Options+.
 
 ## Privacy and security
 
-- **Mouse input only.** The hook is created with `GlobalHookType.Mouse`, so on
-  Windows only `WH_MOUSE_LL` is installed. The keyboard hook is the same API
-  keyloggers use and sees every keystroke including passwords; nothing here needs
-  keystrokes, so it is never requested.
+- **Mouse input only.** On Windows the hook is created with
+  `GlobalHookType.Mouse`, so only `WH_MOUSE_LL` is installed. On macOS the event
+  taps subscribe to mouse, scroll and gesture events, and the keyboard event
+  types are excluded explicitly. A keyboard hook is the same mechanism a
+  keylogger uses and sees every keystroke including passwords; nothing here needs
+  keystrokes, so it is never requested on either platform.
 - **No network connections.** Nothing is sent anywhere. The settings window talks
   to the plugin over a local named pipe, which never touches the network stack.
 - **No telemetry, no analytics, no data collection.** Preferences are stored
@@ -127,32 +174,58 @@ output, writes a `.link` file into the Plugin Service's plugin directory and ask
 it to reload — so the plugin runs straight from your build output. Use
 `dotnet watch build` from `src/` while iterating.
 
-To package a release, **delete the output directory first**:
+To package a release, **use the script** rather than calling `pack` by hand:
 
 ```
-rm -r ./ThrumHapticsPlugin/bin
-dotnet build ThrumHapticsPlugin/src -c Release
-logiplugintool pack ./ThrumHapticsPlugin/bin/Release ./dist/ThrumHaptics_1.1.0.lplug4
-logiplugintool verify ./dist/ThrumHaptics_1.1.0.lplug4
+./tools/pack-release.ps1 -Version 1.2.0
 ```
 
-That first line is not superstition. A build only ever *adds* to the output
-directory — it never removes a file whose source has gone — and `pack` ships
-whatever it finds there. Rename or delete a project and the previous build's
-assemblies stay behind and get packaged alongside the new ones. It is invisible
-in the build log and `verify` passes happily, because the package is structurally
-fine; it just contains files it should not.
+It builds each platform from a completely clean tree, nests the macOS output
+under `bin/mac`, rewrites `pluginFolderMac` to match, and refuses to pack if the
+version, the folder keys or either platform's files are missing.
+
+The clean tree is not tidiness. Two things go wrong without it:
+
+1. **Shared intermediates poison the second build.** Because
+   `AppendRuntimeIdentifierToOutputPath` is false, the RID is stripped from the
+   *intermediate* path too, so building Windows and then macOS shares
+   `src/obj/Release`. The macOS package that comes out has an identical file
+   list, an identical `deps.json` and an assembly of exactly the same size — and
+   Options+ refuses to install it, every time, with a generic error. Eight
+   consecutive packages failed that way while five built standalone installed
+   first time. Nothing in the package content reveals it; only build provenance
+   correlates.
+
+2. **A build only ever *adds* to its output directory.** Rename or delete a
+   project and the previous build's assemblies stay behind and get packaged
+   alongside the new ones. Invisible in the build log, and `verify` passes
+   happily, because the package is structurally fine.
 
 ### Project layout
 
 - **`ThrumHapticsPlugin`** — the plugin. Targets plain `net10.0` with no desktop
-  framework references (see below).
-- **`ThrumHapticsSettings`** — the settings window, a WinForms executable bundled
-  into the same package. Talks to the plugin over a local named pipe.
+  framework references (see below). `MouseInputSource` handles Windows via
+  SharpHook; `MacMouseInputSource` handles macOS via CoreGraphics event taps.
+- **`ThrumHapticsSettings`** — the Windows settings window, a WinForms executable.
+- **`ThrumHapticsSettingsMac`** — the macOS settings window, an Avalonia
+  executable. Separate because WinForms cannot run on macOS, and deliberately not
+  unified: Windows has nothing to gain from the rewrite.
 
-`HapticEvents.cs` and `Waveforms.cs` are compiled into **both** projects rather
-than sent over the pipe, so both share one definition of what events exist and
-only values cross the process boundary.
+`HapticEvents.cs` and `Waveforms.cs` are compiled into **all three** projects
+rather than sent over the pipe, so they share one definition of what events exist
+and only values cross the process boundary.
+
+### Why macOS looks nothing like Windows internally
+
+LogiPluginService runs with the **hardened runtime** and without
+`com.apple.security.cs.disable-library-validation`, so it will only load code
+signed by Apple or by Logitech. SharpHook's `libuiohook.dylib` is neither, and
+signing it ourselves cannot help — it would carry our team ID, not theirs.
+
+So macOS ships no native binary of ours at all. `MacMouseInputSource` P/Invokes
+CoreGraphics directly: `CGEventTapCreate` at HID level for mouse and scroll, plus
+a second session-level tap for the navigation gestures Options+ posts in place of
+the thumb buttons. Both are listen-only.
 
 ### Three things that will bite you
 
@@ -185,7 +258,11 @@ a collectible load context. Use the SDK's `AssemblyFilePath` instead.
 - [x] Scroll wheel and thumb wheel
 - [x] Drag gestures and screen edge
 - [x] Settings window
-- [ ] macOS support
+- [x] macOS support
+- [ ] Per-device filtering — a trackpad or second mouse currently drives the
+      motor too, because both `WH_MOUSE_LL` and `CGEventTap` deliver input
+      already merged across devices. Fixing it needs device-level input: Raw
+      Input on Windows, `IOHIDManager` on macOS.
 
 ## Licence
 

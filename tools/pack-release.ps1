@@ -1,18 +1,21 @@
 <#
 .SYNOPSIS
-    Builds and packs one Thrum Haptics release package per platform.
+    Builds and packs the Thrum Haptics release package.
 
 .DESCRIPTION
-    TWO packages, one version. Each is single-platform: the manifest keeps only
-    the pluginFolder key for its own OS, and its files sit in bin. A Windows user
-    downloads 0.4MB instead of 10.7MB, and each file names the platform it is for.
+    ONE package, both platforms. The manifest carries pluginFolderWin: bin and
+    pluginFolderMac: bin/mac, and the Plugin Service loads whichever matches the
+    running OS. A Windows user downloads the macOS payload too - about 10MB
+    rather than 0.4MB - and in exchange there is one Marketplace listing, one
+    review per release, and no way for the two platforms to drift out of version
+    sync.
 
-    Each package is built from a COMPLETELY CLEAN TREE, and that is not tidiness -
-    it is the fix for a real defect. An earlier version of this script built
-    Windows and then macOS in sequence. Because AppendRuntimeIdentifierToOutputPath
-    is false (needed so pluginFolderWin can stay 'bin'), the RID is stripped from
-    the INTERMEDIATE paths as well, so both builds shared src/obj/Release and the
-    second inherited state from the first.
+    Each platform is built from a COMPLETELY CLEAN TREE, and that is not
+    tidiness - it is the fix for a real defect. An earlier version of this script
+    built Windows and then macOS in sequence. Because
+    AppendRuntimeIdentifierToOutputPath is false (needed so pluginFolderWin can
+    stay 'bin'), the RID is stripped from the INTERMEDIATE paths as well, so both
+    builds shared src/obj/Release and the second inherited state from the first.
 
     The macOS package that came out was subtly poisoned: identical file list,
     identical deps.json, an assembly of exactly the same size exporting the same
@@ -21,13 +24,18 @@
     while five built standalone installed first time. Nothing in the package
     content revealed it; only build provenance correlated.
 
-    So: clean, build one platform, pack, clean again, build the other. Never two
-    RIDs through one intermediate directory.
+    The macOS output is then COPIED into bin/mac of the Windows staging tree, so
+    the two RIDs never meet in one intermediate directory.
 
-    Cleaning also protects the older trap this script was written for. A build only
-    ADDS to its output directory, so a renamed or removed project leaves its old
-    assemblies behind for pack to ship - invisible in the log, and verify passes
-    because the package is structurally fine.
+    NOTE the dual package itself was never the problem. Every failing dual came
+    from the poisoned sequential build, which welded two claims together - "dual
+    layout is broken" and "shared obj is broken" - until a dual package built
+    with clean provenance installed first time and separated them.
+
+    Cleaning also protects the older trap this script was written for. A build
+    only ADDS to its output directory, so a renamed or removed project leaves its
+    old assemblies behind for pack to ship - invisible in the log, and verify
+    passes because the package is structurally fine.
 
 .EXAMPLE
     ./tools/pack-release.ps1 -Version 1.2.0
@@ -42,11 +50,15 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $root 'ThrumHapticsPlugin\src\ThrumHapticsPlugin.csproj'
 $dist = Join-Path $root 'dist'
+$staging = Join-Path $root 'ThrumHapticsPlugin\bin-package'
 
+# NOTE bin-package is deliberately ABSENT. It is the staging tree, and the Windows
+# output is copied into it before the macOS build runs - so listing it here would
+# have Reset-Tree delete the half-assembled package on the way past. It is cleared
+# once, explicitly, at the start of the script instead.
 $scratch = @(
     'ThrumHapticsPlugin\bin'
     'ThrumHapticsPlugin\bin-mac'
-    'ThrumHapticsPlugin\bin-package'
     'ThrumHapticsPlugin\src\obj'
     'ThrumHapticsSettings\bin'
     'ThrumHapticsSettings\obj'
@@ -61,61 +73,70 @@ function Reset-Tree {
     }
 }
 
-function New-Package {
-    param([string]$Platform, [string]$Rid, [string]$OutputTree, [string]$KeepKey, [string]$DropKey)
+# Out-Host, not bare invocation. A PowerShell function returns everything it
+# writes to the pipeline, so build and packer chatter would otherwise come back
+# as part of the return value.
+function Invoke-Build {
+    param([string]$Platform, [string[]]$ExtraArgs)
 
     Write-Host "Building $Platform from a clean tree..." -ForegroundColor Cyan
     Reset-Tree
 
-    $args = @($project, '-c', $Configuration, '--nologo', '-v', 'minimal')
-    if ($Rid) { $args += @('-r', $Rid) } else { $args += '-p:IsDevLoopBuild=false' }
-
-    # Out-Host, not bare invocation. A PowerShell function returns everything it
-    # writes to the pipeline, so build and packer chatter would otherwise be
-    # returned alongside the package path.
-    dotnet build @args | Out-Host
+    dotnet build $project -c $Configuration --nologo -v minimal @ExtraArgs | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "$Platform build failed" }
-
-    $staging = Join-Path $root "ThrumHapticsPlugin\$OutputTree\$Configuration"
-
-    # The other platform's key must GO, not merely be ignored. A package declaring
-    # support for an OS whose files it does not carry is a broken install waiting
-    # to happen.
-    $manifest = Join-Path $staging 'metadata\LoupedeckPackage.yaml'
-    $text = [IO.File]::ReadAllText($manifest, [Text.Encoding]::UTF8)
-    $text = $text.Replace($DropKey, "# omitted: this is a $Platform-only package")
-    [IO.File]::WriteAllText($manifest, $text, (New-Object System.Text.UTF8Encoding($false)))
-
-    $declared = (($text -split "`n") | Where-Object { $_ -match '^version:' }) -replace 'version:\s*', ''
-    if ($declared.Trim() -ne $Version) {
-        throw "LoupedeckPackage.yaml declares '$($declared.Trim())' but -Version said '$Version'."
-    }
-
-    if (-not ((Get-Content $manifest -Encoding utf8) -match "^$KeepKey")) {
-        throw "$KeepKey missing from the $Platform manifest."
-    }
-
-    $stale = Get-ChildItem $staging -Recurse -File | Where-Object { $_.Name -match '(?i)mxhaptic' }
-    if ($stale) { throw "Files from the old plugin name survived: $($stale.Name -join ', ')" }
-
-    $out = Join-Path $dist ("ThrumHaptics_" + ($Version -replace '\.', '_') + "_$Platform.lplug4")
-    if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force }
-
-    logiplugintool pack $staging $out | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "pack failed for $Platform" }
-
-    logiplugintool verify $out | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "verify failed for $Platform" }
-
-    return $out
 }
 
+if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
 if (-not (Test-Path -LiteralPath $dist)) { New-Item -ItemType Directory -Path $dist | Out-Null }
 
-$packages = @(
-    (New-Package -Platform 'Windows' -Rid $null -OutputTree 'bin' -KeepKey 'pluginFolderWin' -DropKey 'pluginFolderMac: bin')
-    (New-Package -Platform 'macOS' -Rid 'osx-arm64' -OutputTree 'bin-mac' -KeepKey 'pluginFolderMac' -DropKey 'pluginFolderWin: bin')
-)
+# Windows first: its output tree carries the metadata and events folders, so it
+# becomes the staging tree that macOS is then nested into.
+Invoke-Build -Platform 'Windows' -ExtraArgs @('-p:IsDevLoopBuild=false')
+Copy-Item -LiteralPath (Join-Path $root "ThrumHapticsPlugin\bin\$Configuration") -Destination $staging -Recurse -Force
+
+Invoke-Build -Platform 'macOS' -ExtraArgs @('-r', 'osx-arm64')
+Copy-Item -LiteralPath (Join-Path $root "ThrumHapticsPlugin\bin-mac\$Configuration\bin") `
+    -Destination (Join-Path $staging 'bin\mac') -Recurse -Force
+
+$manifest = Join-Path $staging 'metadata\LoupedeckPackage.yaml'
+$text = [IO.File]::ReadAllText($manifest, [Text.Encoding]::UTF8)
+
+# pluginFolderMac is 'bin' in the source manifest so a macOS-only build can be
+# packed straight from bin-mac. In the dual package it has to point at the nested
+# copy instead.
+$text = $text.Replace('pluginFolderMac: bin', 'pluginFolderMac: bin/mac')
+[IO.File]::WriteAllText($manifest, $text, (New-Object System.Text.UTF8Encoding($false)))
+
+$declared = (($text -split "`n") | Where-Object { $_ -match '^version:' }) -replace 'version:\s*', ''
+if ($declared.Trim() -ne $Version) {
+    throw "LoupedeckPackage.yaml declares '$($declared.Trim())' but -Version said '$Version'."
+}
+
+foreach ($key in @('pluginFolderWin: bin', 'pluginFolderMac: bin/mac')) {
+    if ($text -notmatch [regex]::Escape($key)) { throw "manifest is missing '$key'" }
+}
+
+# Both platforms must actually be present. A missing folder still packs and still
+# verifies - the package is structurally valid, it just cannot run on one OS.
+foreach ($probe in @('bin\ThrumHapticsPlugin.dll', 'bin\ThrumHapticsSettings.exe',
+                     'bin\mac\ThrumHapticsPlugin.dll', 'bin\mac\ThrumHapticsSettingsMac',
+                     'bin\mac\AppIcon.png')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $staging $probe))) {
+        throw "staging is missing $probe"
+    }
+}
+
+$stale = Get-ChildItem $staging -Recurse -File | Where-Object { $_.Name -match '(?i)mxhaptic' }
+if ($stale) { throw "Files from the old plugin name survived: $($stale.Name -join ', ')" }
+
+$out = Join-Path $dist ("ThrumHaptics_" + ($Version -replace '\.', '_') + ".lplug4")
+if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force }
+
+logiplugintool pack $staging $out | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'pack failed' }
+
+logiplugintool verify $out | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'verify failed' }
 
 Write-Host ''
-Get-Item $packages | Select-Object Name, @{n = 'MB'; e = { [math]::Round($_.Length / 1MB, 2) } }
+Get-Item $out | Select-Object Name, @{n = 'MB'; e = { [math]::Round($_.Length / 1MB, 2) } }
