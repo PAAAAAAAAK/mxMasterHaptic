@@ -407,9 +407,65 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
                 return;
             }
 
-            // Vertical wheel: paced by time. Its physical detents already provide
-            // the rhythm in ratchet mode, and this reads well in free-spin too.
-            this.Fire(HapticEvents.ScrollVertical, this.CooldownFor(HapticEvents.ScrollVertical));
+            this.FireVerticalWheel(e.Data.Rotation);
+        }
+
+        /// <summary>
+        /// Rotation units in one physical detent of the vertical wheel.
+        /// </summary>
+        /// <remarks>
+        /// MEASURED: this wheel reports rotation in multiples of 360, one per
+        /// detent, and delta is always the standard WHEEL_DELTA of 120.
+        ///
+        /// It does NOT do that when Logi Options+ has SMOOTH SCROLLING enabled.
+        /// Options+ then splits each detent into a stream of fractional events -
+        /// rotation 3, 6, 9, 12, 15, 18, 21, 24 out of the same 360 - so that pages
+        /// glide. It applies per application, which is why this appeared in Chrome
+        /// and Edge and nowhere else.
+        ///
+        /// Firing per EVENT therefore produced dozens of haptics per detent,
+        /// limited only by the rate limit - so slow and fast scrolling both came
+        /// out as the same continuous buzz, and the tail of the glide kept buzzing
+        /// after the wheel had stopped.
+        ///
+        /// Counting rotation instead makes both modes agree: one haptic per detent,
+        /// whether the OS delivers that detent as one event or thirty.
+        /// </remarks>
+        private const Int32 VerticalDetentUnits = 360;
+
+        /// <summary>Rotation still owed before the next detent's haptic is due.</summary>
+        private Int32 _verticalWheelPending;
+
+        /// <summary>Paces vertical-wheel haptics by detents, not by events.</summary>
+        /// <remarks>
+        /// Fires on the LEADING edge of each detent - the haptic plays first, and
+        /// the rotation it represents is charged afterwards.
+        ///
+        /// Accumulating first and firing on arrival at 360 is the obvious way round
+        /// and it feels late. Under smooth scrolling the units arrive as a 60Hz
+        /// stream of roughly 111, so a detent takes three or four events to
+        /// complete - and waiting for the last of them puts every haptic 50-70ms
+        /// behind the wheel. Firing on the leading edge spends the same total
+        /// rotation per tick and puts each one at the start of its detent instead.
+        /// </remarks>
+        private void FireVerticalWheel(Int32 rotation)
+        {
+            if (this._verticalWheelPending <= 0)
+            {
+                this.Fire(HapticEvents.ScrollVertical, this.CooldownFor(HapticEvents.ScrollVertical));
+                this._verticalWheelPending += VerticalDetentUnits;
+            }
+
+            this._verticalWheelPending -= Math.Abs(rotation);
+
+            // Free-spin delivers 720 in a single event - two detents at once - and
+            // the motor cannot play two haptics simultaneously. Without this floor
+            // the debt would run away and every later event would fire regardless
+            // of how far the wheel had actually turned.
+            if (this._verticalWheelPending < -VerticalDetentUnits)
+            {
+                this._verticalWheelPending = -VerticalDetentUnits;
+            }
         }
 
         /// <summary>
@@ -430,10 +486,12 @@ namespace Loupedeck.ThrumHapticsPlugin.Input
                 return;
             }
 
-            // Subtract rather than zero, so leftover rotation carries into the next
+            // Remainder rather than zero, so leftover rotation carries into the next
             // detent. Zeroing would slowly lose distance and drift slower than the
-            // real movement.
-            this._thumbWheelAccumulator -= step;
+            // real movement; a single subtraction would let the accumulator grow
+            // without limit once the threshold drops below one event's rotation,
+            // which the densest setting does.
+            this._thumbWheelAccumulator %= step;
 
             // Still honour a time floor: a very fast flick could otherwise cross
             // several detents' worth between events and outrun the motor.

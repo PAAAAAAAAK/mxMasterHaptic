@@ -65,6 +65,24 @@ It's paced by **distance** instead: travel accumulates and a tick fires once per
 notch-equivalent. Roll slowly, ticks come slowly; roll fast, they come fast. The
 haptic supplies the detents the hardware doesn't have.
 
+### Smooth scrolling changes what the ticks follow
+
+Logi Options+ has a **Smooth scrolling** option, applied per application, that
+makes pages glide. With it on, Options+ consumes the wheel's physical detents and
+emits an eased 60 Hz animation stream in their place — so what reaches this
+plugin describes where the *page* is going, not where the wheel is.
+
+Haptics are counted back out of that stream one tick per detent's worth of
+rotation, so slow scrolling still ticks slowly and fast still ticks fast. But
+they follow the eased motion, which is deliberately a little behind your finger.
+
+- **Smooth scrolling off** — ticks lock to the physical detent.
+- **Smooth scrolling on** — ticks follow the page, a frame or so late.
+
+Neither is wrong; they are feedback for different things. If you want the haptic
+to match the click under your finger exactly, turn smooth scrolling off for that
+application.
+
 ### Density
 
 Both wheels have a **Density** setting — Sparse, Light, Standard, Dense, Very
@@ -139,6 +157,29 @@ no Save button.
 
 Density changes don't preview: one waveform can't demonstrate spacing, so
 playing it would say nothing about what just changed. You feel that by scrolling.
+
+### Opening it from a mouse button instead
+
+Logi Options+ only offers plugin actions on the Actions Ring, not in the
+button-assignment list. If you would rather a button opened the settings
+directly, point a **Smart Action → Application** at the bundled executable — it
+defaults to the right connection when launched on its own, so it needs no
+arguments:
+
+**Windows**
+
+```
+%LOCALAPPDATA%\Logi\LogiPluginService\Plugins\ThrumHaptics\bin\ThrumHapticsSettings.exe
+```
+
+**macOS**
+
+```
+~/Library/Application Support/Logi/LogiPluginService/Plugins/ThrumHaptics/bin/mac/ThrumHapticsSettingsMac
+```
+
+Assign that Smart Action to any button. Logi Options+ must be running, since the
+window reads its settings from the plugin.
 
 Clicks and scroll offer only the short waveforms. A long waveform there outlasts
 the action that triggered it and the motor is still running when the next click
